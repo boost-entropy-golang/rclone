@@ -599,3 +599,5 @@ put them back in again.` >}}
   * SimonLiu <simonliu009@users.noreply.github.com>
   * Hugo Laloge <hla@lescompanions.com>
   * Mr-Kanister <68117355+Mr-Kanister@users.noreply.github.com>
+  * Rob Pickerill <r.pickerill@gmail.com>
+  * Andrey <to.merge@gmail.com>
