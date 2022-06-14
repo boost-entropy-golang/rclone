@@ -227,7 +227,7 @@ func shouldRetry(ctx context.Context, resp *http.Response, err error) (bool, err
 		}
 	}
 
-	if resp != nil && resp.StatusCode == 401 && len(resp.Header["Www-Authenticate"]) == 1 && strings.Index(resp.Header["Www-Authenticate"][0], "expired_token") >= 0 {
+	if resp != nil && resp.StatusCode == 401 && len(resp.Header["Www-Authenticate"]) == 1 && strings.Contains(resp.Header["Www-Authenticate"][0], "expired_token") {
 		doRetry = true
 		fs.Debugf(nil, "Should retry: %v", err)
 	}
@@ -908,10 +908,14 @@ func (f *Fs) About(ctx context.Context) (usage *fs.Usage, err error) {
 	if err != nil {
 		return nil, err
 	}
+	free := q.Quota - q.UsedQuota
+	if free < 0 {
+		free = 0
+	}
 	usage = &fs.Usage{
-		Total: fs.NewUsageValue(q.Quota),               // quota of bytes that can be used
-		Used:  fs.NewUsageValue(q.UsedQuota),           // bytes in use
-		Free:  fs.NewUsageValue(q.Quota - q.UsedQuota), // bytes which can be uploaded before reaching the quota
+		Total: fs.NewUsageValue(q.Quota),     // quota of bytes that can be used
+		Used:  fs.NewUsageValue(q.UsedQuota), // bytes in use
+		Free:  fs.NewUsageValue(free),        // bytes which can be uploaded before reaching the quota
 	}
 	return usage, nil
 }

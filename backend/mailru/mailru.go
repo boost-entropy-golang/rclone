@@ -1723,7 +1723,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		return err
 	}
 
-	if bytes.Compare(fileHash, newHash) != 0 {
+	if !bytes.Equal(fileHash, newHash) {
 		if o.fs.opt.CheckHash {
 			return mrhash.ErrorInvalidHash
 		}
@@ -2262,7 +2262,7 @@ func (e *endHandler) handle(err error) error {
 	}
 
 	newHash := e.hasher.Sum(nil)
-	if bytes.Compare(o.mrHash, newHash) == 0 {
+	if bytes.Equal(o.mrHash, newHash) {
 		return io.EOF
 	}
 	if o.fs.opt.CheckHash {
@@ -2277,7 +2277,7 @@ type serverPool struct {
 	pool      pendingServerMap
 	mu        sync.Mutex
 	path      string
-	expirySec time.Duration
+	expirySec int
 	fs        *Fs
 }
 
@@ -2384,7 +2384,7 @@ func (p *serverPool) addServer(url string, now time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	expiry := now.Add(p.expirySec * time.Second)
+	expiry := now.Add(time.Duration(p.expirySec) * time.Second)
 
 	expiryStr := []byte("-")
 	if p.fs.ci.LogLevel >= fs.LogLevelInfo {
