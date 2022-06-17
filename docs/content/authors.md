@@ -606,3 +606,8 @@ put them back in again.` >}}
   * Jason Zheng <jszheng17@gmail.com>
   * Matthew Vernon <mvernon@wikimedia.org>
   * Noah Hsu <i@nn.ci>
+  * m00594701 <mengpengbo@huawei.com>
+  * Art M. Gallagher <artmg50@gmail.com>
+  * Sven Gerber <49589423+svengerber@users.noreply.github.com>
+  * CrossR <r.cross@lancaster.ac.uk>
+  * Maciej Radzikowski <maciej@radzikowski.com.pl>
