@@ -69,6 +69,10 @@ but is useful as it stands.
 
 Note that it might take some time to delete big files/directories. The
 UI won't respond in the meantime since the deletion is done synchronously.
+
+For a non-interactive listing of the remote, see the
+[tree](/commands/rclone_tree/) command. To just get the total size of
+the remote you can also use the [size](/commands/rclone_size/) command.
 `,
 	Run: func(command *cobra.Command, args []string) {
 		cmd.CheckArgs(1, 1, command, args)
@@ -101,9 +105,9 @@ func helpText() (tr []string) {
 	}
 	tr = append(tr, []string{
 		" Y display current path",
-		" ^L refresh screen",
+		" ^L refresh screen (fix screen corruption)",
 		" ? to toggle help on and off",
-		" q/ESC/c-C to quit",
+		" q/ESC/^c to quit",
 	}...)
 	return
 }
