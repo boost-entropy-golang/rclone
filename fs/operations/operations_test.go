@@ -297,7 +297,7 @@ func TestHashSumsWithErrors(t *testing.T) {
 	// Make a test file
 	content := "-"
 	item1 := fstest.NewItem("file1", content, t1)
-	_, _ = fstests.PutTestContents(ctx, t, memFs, &item1, content, true)
+	_ = fstests.PutTestContents(ctx, t, memFs, &item1, content, true)
 
 	// MemoryFS supports MD5
 	buf := &bytes.Buffer{}
@@ -1427,6 +1427,11 @@ func TestListFormat(t *testing.T) {
 	list.AddMimeType()
 	assert.Contains(t, list.Format(item0), "/")
 	assert.Equal(t, "inode/directory", list.Format(item1))
+
+	list.SetOutput(nil)
+	list.AddMetadata()
+	assert.Equal(t, "{}", list.Format(item0))
+	assert.Equal(t, "{}", list.Format(item1))
 
 	list.SetOutput(nil)
 	list.AddPath()
