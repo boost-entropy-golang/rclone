@@ -624,3 +624,5 @@ put them back in again.` >}}
   * zzr93 <34027824+zzr93@users.noreply.github.com>
   * Paul Norman <penorman@mac.com>
   * Lorenzo Maiorfi <maiorfi@gmail.com>
+  * Claudio Maradonna <penguyman@stronzi.org>
+  * Ovidiu Victor Tatar <ovi.tatar@googlemail.com>
