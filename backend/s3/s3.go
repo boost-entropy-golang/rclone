@@ -1,6 +1,8 @@
 // Package s3 provides an interface to Amazon S3 oject storage
 package s3
 
+//go:generate go run gen_setfrom.go -o setfrom.go
+
 import (
 	"bytes"
 	"context"
@@ -37,6 +39,7 @@ import (
 	"github.com/aws/aws-sdk-go/service/s3"
 	"github.com/ncw/swift/v2"
 	"github.com/rclone/rclone/fs"
+	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/chunksize"
 	"github.com/rclone/rclone/fs/config"
 	"github.com/rclone/rclone/fs/config/configmap"
@@ -53,7 +56,7 @@ import (
 	"github.com/rclone/rclone/lib/pool"
 	"github.com/rclone/rclone/lib/readers"
 	"github.com/rclone/rclone/lib/rest"
-	"github.com/rclone/rclone/lib/structs"
+	"github.com/rclone/rclone/lib/version"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -1982,6 +1985,38 @@ circumstances or for testing.
 `,
 			Default:  false,
 			Advanced: true,
+		}, {
+			Name:     "versions",
+			Help:     "Include old versions in directory listings.",
+			Default:  false,
+			Advanced: true,
+		}, {
+			Name: "version_at",
+			Help: `Show file versions as they were at the specified time.
+
+The parameter should be a date, "2006-01-02", datetime "2006-01-02
+15:04:05" or a duration for that long ago, eg "100d" or "1h".
+
+Note that when using this no file write operations are permitted,
+so you can't upload files or delete them.
+
+See [the time option docs](/docs/#time-option) for valid formats.
+`,
+			Default:  fs.Time{},
+			Advanced: true,
+		}, {
+			Name: "decompress",
+			Help: `If set this will decompress gzip encoded objects.
+
+It is possible to upload objects to S3 with "Content-Encoding: gzip"
+set. Normally rclone will download these files files as compressed objects.
+
+If this flag is set then rclone will decompress these files with
+"Content-Encoding: gzip" as they are received. This means that rclone
+can't check the size and hash but the file contents will be decompressed.
+`,
+			Advanced: true,
+			Default:  false,
 		},
 		}})
 }
@@ -2002,6 +2037,11 @@ const (
 	memoryPoolFlushTime = fs.Duration(time.Minute) // flush the cached buffers after this long
 	memoryPoolUseMmap   = false
 	maxExpireDuration   = fs.Duration(7 * 24 * time.Hour) // max expiry is 1 week
+)
+
+// globals
+var (
+	errNotWithVersionAt = errors.New("can't modify or delete files in --s3-version-at mode")
 )
 
 // system metadata keys which this backend owns
@@ -2099,26 +2139,32 @@ type Options struct {
 	DownloadURL           string               `config:"download_url"`
 	UseMultipartEtag      fs.Tristate          `config:"use_multipart_etag"`
 	UsePresignedRequest   bool                 `config:"use_presigned_request"`
+	Versions              bool                 `config:"versions"`
+	VersionAt             fs.Time              `config:"version_at"`
+	Decompress            bool                 `config:"decompress"`
 }
 
 // Fs represents a remote s3 server
 type Fs struct {
-	name          string           // the name of the remote
-	root          string           // root of the bucket - ignore all objects above this
-	opt           Options          // parsed options
-	ci            *fs.ConfigInfo   // global config
-	ctx           context.Context  // global context for reading config
-	features      *fs.Features     // optional features
-	c             *s3.S3           // the connection to the s3 server
-	ses           *session.Session // the s3 session
-	rootBucket    string           // bucket part of root (if any)
-	rootDirectory string           // directory part of root (if any)
-	cache         *bucket.Cache    // cache for bucket creation status
-	pacer         *fs.Pacer        // To pace the API calls
-	srv           *http.Client     // a plain http client
-	srvRest       *rest.Client     // the rest connection to the server
-	pool          *pool.Pool       // memory pool
-	etagIsNotMD5  bool             // if set ETags are not MD5s
+	name           string           // the name of the remote
+	root           string           // root of the bucket - ignore all objects above this
+	opt            Options          // parsed options
+	ci             *fs.ConfigInfo   // global config
+	ctx            context.Context  // global context for reading config
+	features       *fs.Features     // optional features
+	c              *s3.S3           // the connection to the s3 server
+	ses            *session.Session // the s3 session
+	rootBucket     string           // bucket part of root (if any)
+	rootDirectory  string           // directory part of root (if any)
+	cache          *bucket.Cache    // cache for bucket creation status
+	pacer          *fs.Pacer        // To pace the API calls
+	srv            *http.Client     // a plain http client
+	srvRest        *rest.Client     // the rest connection to the server
+	pool           *pool.Pool       // memory pool
+	etagIsNotMD5   bool             // if set ETags are not MD5s
+	versioningMu   sync.Mutex
+	versioning     fs.Tristate // if set bucket is using versions
+	warnCompressed sync.Once   // warn once about compressed files
 }
 
 // Object describes a s3 object
@@ -2134,6 +2180,7 @@ type Object struct {
 	lastModified time.Time         // Last modified
 	meta         map[string]string // The object metadata if known - may be nil - with lower case keys
 	mimeType     string            // MimeType of object - may be ""
+	versionID    *string           // If present this points to an object version
 
 	// Metadata as pointers to strings as they often won't be present
 	storageClass       *string // e.g. GLACIER
@@ -2179,7 +2226,7 @@ var retryErrorCodes = []int{
 	503, // Service Unavailable/Slow Down - "Reduce your request rate"
 }
 
-//S3 is pretty resilient, and the built in retry handling is probably sufficient
+// S3 is pretty resilient, and the built in retry handling is probably sufficient
 // as it should notice closed connections and timeouts which are the most likely
 // sort of failure modes
 func (f *Fs) shouldRetry(ctx context.Context, err error) (bool, error) {
@@ -2235,7 +2282,17 @@ func (f *Fs) split(rootRelativePath string) (bucketName, bucketPath string) {
 
 // split returns bucket and bucketPath from the object
 func (o *Object) split() (bucket, bucketPath string) {
-	return o.fs.split(o.remote)
+	bucket, bucketPath = o.fs.split(o.remote)
+	// If there is an object version, then the path may have a
+	// version suffix, if so remove it.
+	//
+	// If we are unlucky enough to have a file name with a valid
+	// version path where this wasn't required (eg using
+	// --s3-version-at) then this will go wrong.
+	if o.versionID != nil {
+		_, bucketPath = version.Remove(bucketPath)
+	}
+	return bucket, bucketPath
 }
 
 // getClient makes an http client according to the options
@@ -2578,6 +2635,9 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	if err != nil {
 		return nil, fmt.Errorf("s3: upload cutoff: %w", err)
 	}
+	if opt.Versions && opt.VersionAt.IsSet() {
+		return nil, errors.New("s3: cant use --s3-versions and --s3-version-at at the same time")
+	}
 	if opt.ACL == "" {
 		opt.ACL = "private"
 	}
@@ -2669,13 +2729,68 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 	return f, nil
 }
 
+// getMetaDataListing gets the metadata from the object unconditionally from the listing
+//
+// This is needed to find versioned objects from their paths.
+//
+// It may return info == nil and err == nil if a HEAD would be more appropriate
+func (f *Fs) getMetaDataListing(ctx context.Context, wantRemote string) (info *s3.Object, versionID *string, err error) {
+	bucket, bucketPath := f.split(wantRemote)
+
+	// Strip the version string off if using versions
+	if f.opt.Versions {
+		var timestamp time.Time
+		timestamp, bucketPath = version.Remove(bucketPath)
+		// If the path had no version string return no info, to force caller to look it up
+		if timestamp.IsZero() {
+			return nil, nil, nil
+		}
+	}
+
+	err = f.list(ctx, listOpt{
+		bucket:       bucket,
+		directory:    bucketPath,
+		recurse:      true,
+		withVersions: f.opt.Versions,
+		findFile:     true,
+		versionAt:    f.opt.VersionAt,
+	}, func(gotRemote string, object *s3.Object, objectVersionID *string, isDirectory bool) error {
+		if isDirectory {
+			return nil
+		}
+		if wantRemote != gotRemote {
+			return nil
+		}
+		info = object
+		versionID = objectVersionID
+		return errEndList // read only 1 item
+	})
+	if err != nil {
+		if err == fs.ErrorDirNotFound {
+			return nil, nil, fs.ErrorObjectNotFound
+		}
+		return nil, nil, err
+	}
+	if info == nil {
+		return nil, nil, fs.ErrorObjectNotFound
+	}
+	return info, versionID, nil
+}
+
 // Return an Object from a path
 //
-//If it can't be found it returns the error ErrorObjectNotFound.
-func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *s3.Object) (fs.Object, error) {
+// If it can't be found it returns the error ErrorObjectNotFound.
+func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *s3.Object, versionID *string) (obj fs.Object, err error) {
 	o := &Object{
 		fs:     f,
 		remote: remote,
+	}
+	if info == nil && ((f.opt.Versions && version.Match(remote)) || f.opt.VersionAt.IsSet()) {
+		// If versions, have to read the listing to find the correct version ID
+		info, versionID, err = f.getMetaDataListing(ctx, remote)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if info != nil {
 		// Set info but not meta
@@ -2688,6 +2803,7 @@ func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *s3.Obje
 		o.setMD5FromEtag(aws.StringValue(info.ETag))
 		o.bytes = aws.Int64Value(info.Size)
 		o.storageClass = info.StorageClass
+		o.versionID = versionID
 	} else if !o.fs.opt.NoHeadObject {
 		err := o.readMetaData(ctx) // reads info and meta, returning an error
 		if err != nil {
@@ -2700,7 +2816,7 @@ func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *s3.Obje
 // NewObject finds the Object at remote.  If it can't be found
 // it returns the error fs.ErrorObjectNotFound.
 func (f *Fs) NewObject(ctx context.Context, remote string) (fs.Object, error) {
-	return f.newObjectWithInfo(ctx, remote, nil)
+	return f.newObjectWithInfo(ctx, remote, nil, nil)
 }
 
 // Gets the bucket location
@@ -2748,28 +2864,297 @@ func (f *Fs) updateRegionForBucket(ctx context.Context, bucket string) error {
 	return nil
 }
 
-// listFn is called from list to handle an object.
-type listFn func(remote string, object *s3.Object, isDirectory bool) error
+// Common interface for bucket listers
+type bucketLister interface {
+	List(ctx context.Context) (resp *s3.ListObjectsV2Output, versionIDs []*string, err error)
+	URLEncodeListings(bool)
+}
 
-// list lists the objects into the function supplied from
-// the bucket and directory supplied.  The remote has prefix
-// removed from it and if addBucket is set then it adds the
-// bucket to the start.
-//
-// Set recurse to read sub directories
-func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBucket bool, recurse bool, fn listFn) error {
-	v1 := f.opt.ListVersion == 1
-	if prefix != "" {
-		prefix += "/"
+// V1 bucket lister
+type v1List struct {
+	f   *Fs
+	req s3.ListObjectsInput
+}
+
+// Create a new V1 bucket lister
+func (f *Fs) newV1List(req *s3.ListObjectsV2Input) bucketLister {
+	l := &v1List{
+		f: f,
 	}
-	if directory != "" {
-		directory += "/"
+	// Convert v2 req into v1 req
+	//structs.SetFrom(&l.req, req)
+	setFrom_s3ListObjectsInput_s3ListObjectsV2Input(&l.req, req)
+	return l
+}
+
+// List a bucket with V1 listing
+func (ls *v1List) List(ctx context.Context) (resp *s3.ListObjectsV2Output, versionIDs []*string, err error) {
+	respv1, err := ls.f.c.ListObjectsWithContext(ctx, &ls.req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Set up the request for next time
+	ls.req.Marker = respv1.NextMarker
+	if aws.BoolValue(respv1.IsTruncated) && ls.req.Marker == nil {
+		if len(respv1.Contents) == 0 {
+			return nil, nil, errors.New("s3 protocol error: received listing v1 with IsTruncated set, no NextMarker and no Contents")
+		}
+		// Use the last Key received if no NextMarker and isTruncated
+		ls.req.Marker = respv1.Contents[len(respv1.Contents)-1].Key
+
+	}
+
+	// If we are URL encoding then must decode the marker
+	if ls.req.Marker != nil && ls.req.EncodingType != nil {
+		*ls.req.Marker, err = url.QueryUnescape(*ls.req.Marker)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to URL decode Marker %q: %w", *ls.req.Marker, err)
+		}
+	}
+
+	// convert v1 resp into v2 resp
+	resp = new(s3.ListObjectsV2Output)
+	//structs.SetFrom(resp, respv1)
+	setFrom_s3ListObjectsV2Output_s3ListObjectsOutput(resp, respv1)
+
+	return resp, nil, nil
+}
+
+// URL Encode the listings
+func (ls *v1List) URLEncodeListings(encode bool) {
+	if encode {
+		ls.req.EncodingType = aws.String(s3.EncodingTypeUrl)
+	} else {
+		ls.req.EncodingType = nil
+	}
+}
+
+// V2 bucket lister
+type v2List struct {
+	f   *Fs
+	req s3.ListObjectsV2Input
+}
+
+// Create a new V2 bucket lister
+func (f *Fs) newV2List(req *s3.ListObjectsV2Input) bucketLister {
+	return &v2List{
+		f:   f,
+		req: *req,
+	}
+}
+
+// Do a V2 listing
+func (ls *v2List) List(ctx context.Context) (resp *s3.ListObjectsV2Output, versionIDs []*string, err error) {
+	resp, err = ls.f.c.ListObjectsV2WithContext(ctx, &ls.req)
+	ls.req.ContinuationToken = resp.NextContinuationToken
+	return resp, nil, err
+}
+
+// URL Encode the listings
+func (ls *v2List) URLEncodeListings(encode bool) {
+	if encode {
+		ls.req.EncodingType = aws.String(s3.EncodingTypeUrl)
+	} else {
+		ls.req.EncodingType = nil
+	}
+}
+
+// Versions bucket lister
+type versionsList struct {
+	f              *Fs
+	req            s3.ListObjectVersionsInput
+	versionAt      time.Time // set if we want only versions before this
+	usingVersionAt bool      // set if we need to use versionAt
+	hidden         bool      // set to see hidden versions
+	lastKeySent    string    // last Key sent to the receiving function
+}
+
+// Create a new Versions bucket lister
+func (f *Fs) newVersionsList(req *s3.ListObjectsV2Input, hidden bool, versionAt time.Time) bucketLister {
+	l := &versionsList{
+		f:              f,
+		versionAt:      versionAt,
+		usingVersionAt: !versionAt.IsZero(),
+		hidden:         hidden,
+	}
+	// Convert v2 req into withVersions req
+	//structs.SetFrom(&l.req, req)
+	setFrom_s3ListObjectVersionsInput_s3ListObjectsV2Input(&l.req, req)
+	return l
+}
+
+// Any s3.Object or s3.ObjectVersion with this as their Size are delete markers
+var isDeleteMarker = new(int64)
+
+// Compare two s3.ObjectVersions, sorted alphabetically by key with
+// the newest first if the Keys match or the one with IsLatest set if
+// everything matches.
+func versionLess(a, b *s3.ObjectVersion) bool {
+	if a == nil || a.Key == nil || a.LastModified == nil {
+		return true
+	}
+	if b == nil || b.Key == nil || b.LastModified == nil {
+		return false
+	}
+	if *a.Key < *b.Key {
+		return true
+	}
+	if *a.Key > *b.Key {
+		return false
+	}
+	dt := (*a.LastModified).Sub(*b.LastModified)
+	if dt > 0 {
+		return true
+	}
+	if dt < 0 {
+		return false
+	}
+	if aws.BoolValue(a.IsLatest) {
+		return true
+	}
+	return false
+}
+
+// Merge the DeleteMarkers into the Versions.
+//
+// These are delivered by S3 sorted by key then by LastUpdated
+// newest first but annoyingly the SDK splits them up into two
+// so we need to merge them back again
+//
+// We do this by converting the s3.DeleteEntry into
+// s3.ObjectVersion with Size = isDeleteMarker to tell them apart
+//
+// We then merge them back into the Versions in the correct order
+func mergeDeleteMarkers(oldVersions []*s3.ObjectVersion, deleteMarkers []*s3.DeleteMarkerEntry) (newVersions []*s3.ObjectVersion) {
+	newVersions = make([]*s3.ObjectVersion, 0, len(oldVersions)+len(deleteMarkers))
+	for _, deleteMarker := range deleteMarkers {
+		var obj = new(s3.ObjectVersion)
+		//structs.SetFrom(obj, deleteMarker)
+		setFrom_s3ObjectVersion_s3DeleteMarkerEntry(obj, deleteMarker)
+		obj.Size = isDeleteMarker
+		for len(oldVersions) > 0 && versionLess(oldVersions[0], obj) {
+			newVersions = append(newVersions, oldVersions[0])
+			oldVersions = oldVersions[1:]
+		}
+		newVersions = append(newVersions, obj)
+	}
+	// Merge any remaining versions
+	newVersions = append(newVersions, oldVersions...)
+	return newVersions
+}
+
+// List a bucket with versions
+func (ls *versionsList) List(ctx context.Context) (resp *s3.ListObjectsV2Output, versionIDs []*string, err error) {
+	respVersions, err := ls.f.c.ListObjectVersionsWithContext(ctx, &ls.req)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Set up the request for next time
+	ls.req.KeyMarker = respVersions.NextKeyMarker
+	ls.req.VersionIdMarker = respVersions.NextVersionIdMarker
+
+	// If we are URL encoding then must decode the marker
+	if ls.req.KeyMarker != nil && ls.req.EncodingType != nil {
+		*ls.req.KeyMarker, err = url.QueryUnescape(*ls.req.KeyMarker)
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to URL decode KeyMarker %q: %w", *ls.req.KeyMarker, err)
+		}
+	}
+
+	// convert Versions resp into v2 resp
+	resp = new(s3.ListObjectsV2Output)
+	//structs.SetFrom(resp, respVersions)
+	setFrom_s3ListObjectsV2Output_s3ListObjectVersionsOutput(resp, respVersions)
+
+	// Merge in delete Markers as s3.ObjectVersion if we need them
+	if ls.hidden || ls.usingVersionAt {
+		respVersions.Versions = mergeDeleteMarkers(respVersions.Versions, respVersions.DeleteMarkers)
+	}
+
+	// Convert the Versions and the DeleteMarkers into an array of s3.Object
+	//
+	// These are returned in the order that they are stored with the most recent first.
+	// With the annoyance that the Versions and DeleteMarkers are split into two
+	objs := make([]*s3.Object, 0, len(respVersions.Versions))
+	for _, objVersion := range respVersions.Versions {
+		if ls.usingVersionAt {
+			if objVersion.LastModified.After(ls.versionAt) {
+				// Ignore versions that were created after the specified time
+				continue
+			}
+			if *objVersion.Key == ls.lastKeySent {
+				// Ignore versions before the already returned version
+				continue
+			}
+		}
+		ls.lastKeySent = *objVersion.Key
+		// Don't send delete markers if we don't want hidden things
+		if !ls.hidden && objVersion.Size == isDeleteMarker {
+			continue
+		}
+		var obj = new(s3.Object)
+		//structs.SetFrom(obj, objVersion)
+		setFrom_s3Object_s3ObjectVersion(obj, objVersion)
+		// Adjust the file names
+		if !ls.usingVersionAt && !aws.BoolValue(objVersion.IsLatest) {
+			if obj.Key != nil && objVersion.LastModified != nil {
+				*obj.Key = version.Add(*obj.Key, *objVersion.LastModified)
+			}
+		}
+		objs = append(objs, obj)
+		versionIDs = append(versionIDs, objVersion.VersionId)
+	}
+
+	resp.Contents = objs
+	return resp, versionIDs, nil
+}
+
+// URL Encode the listings
+func (ls *versionsList) URLEncodeListings(encode bool) {
+	if encode {
+		ls.req.EncodingType = aws.String(s3.EncodingTypeUrl)
+	} else {
+		ls.req.EncodingType = nil
+	}
+}
+
+// listFn is called from list to handle an object.
+type listFn func(remote string, object *s3.Object, versionID *string, isDirectory bool) error
+
+// errEndList is a sentinel used to end the list iteration now.
+// listFn should return it to end the iteration with no errors.
+var errEndList = errors.New("end list")
+
+// list options
+type listOpt struct {
+	bucket       string  // bucket to list
+	directory    string  // directory with bucket
+	prefix       string  // prefix to remove from listing
+	addBucket    bool    // if set, the bucket is added to the start of the remote
+	recurse      bool    // if set, recurse to read sub directories
+	withVersions bool    // if set, versions are produced
+	hidden       bool    // if set, return delete markers as objects with size == isDeleteMarker
+	findFile     bool    // if set, it will look for files called (bucket, directory)
+	versionAt    fs.Time // if set only show versions <= this time
+}
+
+// list lists the objects into the function supplied with the opt
+// supplied.
+func (f *Fs) list(ctx context.Context, opt listOpt, fn listFn) error {
+	if !opt.findFile {
+		if opt.prefix != "" {
+			opt.prefix += "/"
+		}
+		if opt.directory != "" {
+			opt.directory += "/"
+		}
 	}
 	delimiter := ""
-	if !recurse {
+	if !opt.recurse {
 		delimiter = "/"
 	}
-	var continuationToken, startAfter *string
 	// URL encode the listings so we can use control characters in object names
 	// See: https://github.com/aws/aws-sdk-go/issues/1914
 	//
@@ -2786,51 +3171,37 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 	// So we enable only on providers we know supports it properly, all others can retry when a
 	// XML Syntax error is detected.
 	urlEncodeListings := f.opt.ListURLEncode.Value
+	req := s3.ListObjectsV2Input{
+		Bucket:    &opt.bucket,
+		Delimiter: &delimiter,
+		Prefix:    &opt.directory,
+		MaxKeys:   &f.opt.ListChunk,
+	}
+	if f.opt.RequesterPays {
+		req.RequestPayer = aws.String(s3.RequestPayerRequester)
+	}
+	var listBucket bucketLister
+	switch {
+	case opt.withVersions || opt.versionAt.IsSet():
+		listBucket = f.newVersionsList(&req, opt.hidden, time.Time(opt.versionAt))
+	case f.opt.ListVersion == 1:
+		listBucket = f.newV1List(&req)
+	default:
+		listBucket = f.newV2List(&req)
+	}
 	for {
-		// FIXME need to implement ALL loop
-		req := s3.ListObjectsV2Input{
-			Bucket:            &bucket,
-			ContinuationToken: continuationToken,
-			Delimiter:         &delimiter,
-			Prefix:            &directory,
-			MaxKeys:           &f.opt.ListChunk,
-			StartAfter:        startAfter,
-		}
-		if urlEncodeListings {
-			req.EncodingType = aws.String(s3.EncodingTypeUrl)
-		}
-		if f.opt.RequesterPays {
-			req.RequestPayer = aws.String(s3.RequestPayerRequester)
-		}
 		var resp *s3.ListObjectsV2Output
 		var err error
+		var versionIDs []*string
 		err = f.pacer.Call(func() (bool, error) {
-			if v1 {
-				// Convert v2 req into v1 req
-				var reqv1 s3.ListObjectsInput
-				structs.SetFrom(&reqv1, &req)
-				reqv1.Marker = continuationToken
-				if startAfter != nil {
-					reqv1.Marker = startAfter
-				}
-				var respv1 *s3.ListObjectsOutput
-				respv1, err = f.c.ListObjectsWithContext(ctx, &reqv1)
-				if err == nil && respv1 != nil {
-					// convert v1 resp into v2 resp
-					resp = new(s3.ListObjectsV2Output)
-					structs.SetFrom(resp, respv1)
-					resp.NextContinuationToken = respv1.NextMarker
-				}
-			} else {
-				resp, err = f.c.ListObjectsV2WithContext(ctx, &req)
-			}
+			listBucket.URLEncodeListings(urlEncodeListings)
+			resp, versionIDs, err = listBucket.List(ctx)
 			if err != nil && !urlEncodeListings {
 				if awsErr, ok := err.(awserr.RequestFailure); ok {
 					if origErr := awsErr.OrigErr(); origErr != nil {
 						if _, ok := origErr.(*xml.SyntaxError); ok {
 							// Retry the listing with URL encoding as there were characters that XML can't encode
 							urlEncodeListings = true
-							req.EncodingType = aws.String(s3.EncodingTypeUrl)
 							fs.Debugf(f, "Retrying listing because of characters which can't be XML encoded")
 							return true, err
 						}
@@ -2851,14 +3222,14 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 				if reqErr, ok := err.(awserr.RequestFailure); ok {
 					// 301 if wrong region for bucket
 					if reqErr.StatusCode() == http.StatusMovedPermanently {
-						fs.Errorf(f, "Can't change region for bucket %q with no bucket specified", bucket)
+						fs.Errorf(f, "Can't change region for bucket %q with no bucket specified", opt.bucket)
 						return nil
 					}
 				}
 			}
 			return err
 		}
-		if !recurse {
+		if !opt.recurse {
 			for _, commonPrefix := range resp.CommonPrefixes {
 				if commonPrefix.Prefix == nil {
 					fs.Logf(f, "Nil common prefix received")
@@ -2873,22 +3244,25 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 					}
 				}
 				remote = f.opt.Enc.ToStandardPath(remote)
-				if !strings.HasPrefix(remote, prefix) {
+				if !strings.HasPrefix(remote, opt.prefix) {
 					fs.Logf(f, "Odd name received %q", remote)
 					continue
 				}
-				remote = remote[len(prefix):]
-				if addBucket {
-					remote = path.Join(bucket, remote)
+				remote = remote[len(opt.prefix):]
+				if opt.addBucket {
+					remote = path.Join(opt.bucket, remote)
 				}
 				remote = strings.TrimSuffix(remote, "/")
-				err = fn(remote, &s3.Object{Key: &remote}, true)
+				err = fn(remote, &s3.Object{Key: &remote}, nil, true)
 				if err != nil {
+					if err == errEndList {
+						return nil
+					}
 					return err
 				}
 			}
 		}
-		for _, object := range resp.Contents {
+		for i, object := range resp.Contents {
 			remote := aws.StringValue(object.Key)
 			if urlEncodeListings {
 				remote, err = url.QueryUnescape(remote)
@@ -2898,50 +3272,40 @@ func (f *Fs) list(ctx context.Context, bucket, directory, prefix string, addBuck
 				}
 			}
 			remote = f.opt.Enc.ToStandardPath(remote)
-			if !strings.HasPrefix(remote, prefix) {
+			if !strings.HasPrefix(remote, opt.prefix) {
 				fs.Logf(f, "Odd name received %q", remote)
 				continue
 			}
-			remote = remote[len(prefix):]
+			remote = remote[len(opt.prefix):]
 			isDirectory := remote == "" || strings.HasSuffix(remote, "/")
-			if addBucket {
-				remote = path.Join(bucket, remote)
+			if opt.addBucket {
+				remote = path.Join(opt.bucket, remote)
 			}
 			// is this a directory marker?
 			if isDirectory && object.Size != nil && *object.Size == 0 {
 				continue // skip directory marker
 			}
-			err = fn(remote, object, false)
+			if versionIDs != nil {
+				err = fn(remote, object, versionIDs[i], false)
+			} else {
+				err = fn(remote, object, nil, false)
+			}
 			if err != nil {
+				if err == errEndList {
+					return nil
+				}
 				return err
 			}
 		}
 		if !aws.BoolValue(resp.IsTruncated) {
 			break
 		}
-		// Use NextContinuationToken if set, otherwise use last Key for StartAfter
-		if resp.NextContinuationToken == nil || *resp.NextContinuationToken == "" {
-			if len(resp.Contents) == 0 {
-				return errors.New("s3 protocol error: received listing with IsTruncated set, no NextContinuationToken/NextMarker and no Contents")
-			}
-			continuationToken = nil
-			startAfter = resp.Contents[len(resp.Contents)-1].Key
-		} else {
-			continuationToken = resp.NextContinuationToken
-			startAfter = nil
-		}
-		if startAfter != nil && urlEncodeListings {
-			*startAfter, err = url.QueryUnescape(*startAfter)
-			if err != nil {
-				return fmt.Errorf("failed to URL decode StartAfter/NextMarker %q: %w", *continuationToken, err)
-			}
-		}
 	}
 	return nil
 }
 
 // Convert a list item into a DirEntry
-func (f *Fs) itemToDirEntry(ctx context.Context, remote string, object *s3.Object, isDirectory bool) (fs.DirEntry, error) {
+func (f *Fs) itemToDirEntry(ctx context.Context, remote string, object *s3.Object, versionID *string, isDirectory bool) (fs.DirEntry, error) {
 	if isDirectory {
 		size := int64(0)
 		if object.Size != nil {
@@ -2950,7 +3314,7 @@ func (f *Fs) itemToDirEntry(ctx context.Context, remote string, object *s3.Objec
 		d := fs.NewDir(remote, time.Time{}).SetSize(size)
 		return d, nil
 	}
-	o, err := f.newObjectWithInfo(ctx, remote, object)
+	o, err := f.newObjectWithInfo(ctx, remote, object, versionID)
 	if err != nil {
 		return nil, err
 	}
@@ -2960,8 +3324,15 @@ func (f *Fs) itemToDirEntry(ctx context.Context, remote string, object *s3.Objec
 // listDir lists files and directories to out
 func (f *Fs) listDir(ctx context.Context, bucket, directory, prefix string, addBucket bool) (entries fs.DirEntries, err error) {
 	// List the objects and directories
-	err = f.list(ctx, bucket, directory, prefix, addBucket, false, func(remote string, object *s3.Object, isDirectory bool) error {
-		entry, err := f.itemToDirEntry(ctx, remote, object, isDirectory)
+	err = f.list(ctx, listOpt{
+		bucket:       bucket,
+		directory:    directory,
+		prefix:       prefix,
+		addBucket:    addBucket,
+		withVersions: f.opt.Versions,
+		versionAt:    f.opt.VersionAt,
+	}, func(remote string, object *s3.Object, versionID *string, isDirectory bool) error {
+		entry, err := f.itemToDirEntry(ctx, remote, object, versionID, isDirectory)
 		if err != nil {
 			return err
 		}
@@ -3038,8 +3409,16 @@ func (f *Fs) ListR(ctx context.Context, dir string, callback fs.ListRCallback) (
 	bucket, directory := f.split(dir)
 	list := walk.NewListRHelper(callback)
 	listR := func(bucket, directory, prefix string, addBucket bool) error {
-		return f.list(ctx, bucket, directory, prefix, addBucket, true, func(remote string, object *s3.Object, isDirectory bool) error {
-			entry, err := f.itemToDirEntry(ctx, remote, object, isDirectory)
+		return f.list(ctx, listOpt{
+			bucket:       bucket,
+			directory:    directory,
+			prefix:       prefix,
+			addBucket:    addBucket,
+			recurse:      true,
+			withVersions: f.opt.Versions,
+			versionAt:    f.opt.VersionAt,
+		}, func(remote string, object *s3.Object, versionID *string, isDirectory bool) error {
+			entry, err := f.itemToDirEntry(ctx, remote, object, versionID, isDirectory)
 			if err != nil {
 				return err
 			}
@@ -3194,6 +3573,9 @@ func (f *Fs) copy(ctx context.Context, req *s3.CopyObjectInput, dstBucket, dstPa
 	req.ACL = &f.opt.ACL
 	req.Key = &dstPath
 	source := pathEscape(path.Join(srcBucket, srcPath))
+	if src.versionID != nil {
+		source += fmt.Sprintf("?versionId=%s", *src.versionID)
+	}
 	req.CopySource = &source
 	if f.opt.RequesterPays {
 		req.RequestPayer = aws.String(s3.RequestPayerRequester)
@@ -3251,7 +3633,8 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 	req := &s3.CreateMultipartUploadInput{}
 
 	// Fill in the request from the head info
-	structs.SetFrom(req, info)
+	//structs.SetFrom(req, info)
+	setFrom_s3CreateMultipartUploadInput_s3HeadObjectOutput(req, info)
 
 	// If copy metadata was set then set the Metadata to that read
 	// from the head request
@@ -3260,7 +3643,8 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 	}
 
 	// Overwrite any from the copyReq
-	structs.SetFrom(req, copyReq)
+	//structs.SetFrom(req, copyReq)
+	setFrom_s3CreateMultipartUploadInput_s3CopyObjectInput(req, copyReq)
 
 	req.Bucket = &dstBucket
 	req.Key = &dstPath
@@ -3300,7 +3684,8 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 		if err := f.pacer.Call(func() (bool, error) {
 			partNum := partNum
 			uploadPartReq := &s3.UploadPartCopyInput{}
-			structs.SetFrom(uploadPartReq, copyReq)
+			//structs.SetFrom(uploadPartReq, copyReq)
+			setFrom_s3UploadPartCopyInput_s3CopyObjectInput(uploadPartReq, copyReq)
 			uploadPartReq.Bucket = &dstBucket
 			uploadPartReq.Key = &dstPath
 			uploadPartReq.PartNumber = &partNum
@@ -3336,14 +3721,17 @@ func (f *Fs) copyMultipart(ctx context.Context, copyReq *s3.CopyObjectInput, dst
 
 // Copy src to this remote using server-side copy operations.
 //
-// This is stored with the remote path given
+// This is stored with the remote path given.
 //
-// It returns the destination Object and a possible error
+// It returns the destination Object and a possible error.
 //
 // Will only be called if src.Fs().Name() == f.Name()
 //
 // If it isn't possible then return fs.ErrorCantCopy
 func (f *Fs) Copy(ctx context.Context, src fs.Object, remote string) (fs.Object, error) {
+	if f.opt.VersionAt.IsSet() {
+		return nil, errNotWithVersionAt
+	}
 	dstBucket, dstPath := f.split(remote)
 	err := f.makeBucket(ctx, dstBucket)
 	if err != nil {
@@ -3388,17 +3776,20 @@ func (f *Fs) PublicLink(ctx context.Context, remote string, expire fs.Duration, 
 	if strings.HasSuffix(remote, "/") {
 		return "", fs.ErrorCantShareDirectories
 	}
-	if _, err := f.NewObject(ctx, remote); err != nil {
+	obj, err := f.NewObject(ctx, remote)
+	if err != nil {
 		return "", err
 	}
+	o := obj.(*Object)
 	if expire > maxExpireDuration {
 		fs.Logf(f, "Public Link: Reducing expiry to %v as %v is greater than the max time allowed", maxExpireDuration, expire)
 		expire = maxExpireDuration
 	}
-	bucket, bucketPath := f.split(remote)
+	bucket, bucketPath := o.split()
 	httpReq, _ := f.c.GetObjectRequest(&s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &bucketPath,
+		Bucket:    &bucket,
+		Key:       &bucketPath,
+		VersionId: o.versionID,
 	})
 
 	return httpReq.Presign(time.Duration(expire))
@@ -3497,6 +3888,31 @@ Durations are parsed as per the rest of rclone, 2h, 7d, 7w etc.
 	Opts: map[string]string{
 		"max-age": "Max age of upload to delete",
 	},
+}, {
+	Name:  "cleanup-hidden",
+	Short: "Remove old versions of files.",
+	Long: `This command removes any old hidden versions of files
+on a versions enabled bucket.
+
+Note that you can use -i/--dry-run with this command to see what it
+would do.
+
+    rclone backend cleanup-hidden s3:bucket/path/to/dir
+`,
+}, {
+	Name:  "versioning",
+	Short: "Set/get versioning support for a bucket.",
+	Long: `This command sets versioning support if a parameter is
+passed and then returns the current versioning status for the bucket
+supplied.
+
+    rclone backend versioning s3:bucket # read status only
+    rclone backend versioning s3:bucket Enabled
+    rclone backend versioning s3:bucket Suspended
+
+It may return "Enabled", "Suspended" or "Unversioned". Note that once versioning
+has been enabled the status can't be set back to "Unversioned".
+`,
 }}
 
 // Command the backend to run a named command
@@ -3563,6 +3979,7 @@ func (f *Fs) Command(ctx context.Context, name string, arg []string, opt map[str
 			reqCopy := req
 			reqCopy.Bucket = &bucket
 			reqCopy.Key = &bucketPath
+			reqCopy.VersionId = o.versionID
 			err = f.pacer.Call(func() (bool, error) {
 				_, err = f.c.RestoreObject(&reqCopy)
 				return f.shouldRetry(ctx, err)
@@ -3586,6 +4003,10 @@ func (f *Fs) Command(ctx context.Context, name string, arg []string, opt map[str
 			}
 		}
 		return nil, f.cleanUp(ctx, maxAge)
+	case "cleanup-hidden":
+		return nil, f.CleanUpHidden(ctx)
+	case "versioning":
+		return f.setGetVersioning(ctx, arg...)
 	default:
 		return nil, fs.ErrorCommandNotFound
 	}
@@ -3701,9 +4122,169 @@ func (f *Fs) cleanUp(ctx context.Context, maxAge time.Duration) (err error) {
 	return err
 }
 
+// Read whether the bucket is versioned or not
+func (f *Fs) isVersioned(ctx context.Context) bool {
+	f.versioningMu.Lock()
+	defer f.versioningMu.Unlock()
+	if !f.versioning.Valid {
+		_, _ = f.setGetVersioning(ctx)
+		fs.Debugf(f, "bucket is versioned: %v", f.versioning.Value)
+	}
+	return f.versioning.Value
+}
+
+// Set or get bucket versioning.
+//
+// Pass no arguments to get, or pass "Enabled" or "Suspended"
+//
+// Updates f.versioning
+func (f *Fs) setGetVersioning(ctx context.Context, arg ...string) (status string, err error) {
+	if len(arg) > 1 {
+		return "", errors.New("too many arguments")
+	}
+	if f.rootBucket == "" {
+		return "", errors.New("need a bucket")
+	}
+	if len(arg) == 1 {
+		var versioning = s3.VersioningConfiguration{
+			Status: aws.String(arg[0]),
+		}
+		// Disabled is indicated by the parameter missing
+		if *versioning.Status == "Disabled" {
+			versioning.Status = aws.String("")
+		}
+		req := s3.PutBucketVersioningInput{
+			Bucket:                  &f.rootBucket,
+			VersioningConfiguration: &versioning,
+		}
+		err := f.pacer.Call(func() (bool, error) {
+			_, err = f.c.PutBucketVersioningWithContext(ctx, &req)
+			return f.shouldRetry(ctx, err)
+		})
+		if err != nil {
+			return "", err
+		}
+	}
+	req := s3.GetBucketVersioningInput{
+		Bucket: &f.rootBucket,
+	}
+	var resp *s3.GetBucketVersioningOutput
+	err = f.pacer.Call(func() (bool, error) {
+		resp, err = f.c.GetBucketVersioningWithContext(ctx, &req)
+		return f.shouldRetry(ctx, err)
+	})
+	f.versioning.Valid = true
+	f.versioning.Value = false
+	if err != nil {
+		fs.Errorf(f, "Failed to read versioning status, assuming unversioned: %v", err)
+		return "", err
+	}
+	if resp.Status == nil {
+		return "Unversioned", err
+	}
+	f.versioning.Value = true
+	return *resp.Status, err
+}
+
 // CleanUp removes all pending multipart uploads older than 24 hours
 func (f *Fs) CleanUp(ctx context.Context) (err error) {
 	return f.cleanUp(ctx, 24*time.Hour)
+}
+
+// purge deletes all the files and directories
+//
+// if oldOnly is true then it deletes only non current files.
+//
+// Implemented here so we can make sure we delete old versions.
+func (f *Fs) purge(ctx context.Context, dir string, oldOnly bool) error {
+	if f.opt.VersionAt.IsSet() {
+		return errNotWithVersionAt
+	}
+	bucket, directory := f.split(dir)
+	if bucket == "" {
+		return errors.New("can't purge from root")
+	}
+	versioned := f.isVersioned(ctx)
+	if !versioned && oldOnly {
+		fs.Infof(f, "bucket is not versioned so not removing old versions")
+		return nil
+	}
+	var errReturn error
+	var checkErrMutex sync.Mutex
+	var checkErr = func(err error) {
+		if err == nil {
+			return
+		}
+		checkErrMutex.Lock()
+		defer checkErrMutex.Unlock()
+		if errReturn == nil {
+			errReturn = err
+		}
+	}
+
+	// Delete Config.Transfers in parallel
+	delChan := make(fs.ObjectsChan, f.ci.Transfers)
+	delErr := make(chan error, 1)
+	go func() {
+		delErr <- operations.DeleteFiles(ctx, delChan)
+	}()
+	checkErr(f.list(ctx, listOpt{
+		bucket:       bucket,
+		directory:    directory,
+		prefix:       f.rootDirectory,
+		addBucket:    f.rootBucket == "",
+		recurse:      true,
+		withVersions: versioned,
+		hidden:       true,
+	}, func(remote string, object *s3.Object, versionID *string, isDirectory bool) error {
+		if isDirectory {
+			return nil
+		}
+		oi, err := f.newObjectWithInfo(ctx, remote, object, versionID)
+		if err != nil {
+			fs.Errorf(object, "Can't create object %+v", err)
+			return nil
+		}
+		tr := accounting.Stats(ctx).NewCheckingTransfer(oi)
+		// Work out whether the file is the current version or not
+		isCurrentVersion := !versioned || !version.Match(remote)
+		fs.Debugf(nil, "%q version %v", remote, version.Match(remote))
+		if oldOnly && isCurrentVersion {
+			// Check current version of the file
+			if object.Size == isDeleteMarker {
+				fs.Debugf(remote, "Deleting current version (id %q) as it is a delete marker", aws.StringValue(versionID))
+				delChan <- oi
+			} else {
+				fs.Debugf(remote, "Not deleting current version %q", aws.StringValue(versionID))
+			}
+		} else {
+			if object.Size == isDeleteMarker {
+				fs.Debugf(remote, "Deleting delete marker (id %q)", aws.StringValue(versionID))
+			} else {
+				fs.Debugf(remote, "Deleting (id %q)", aws.StringValue(versionID))
+			}
+			delChan <- oi
+		}
+		tr.Done(ctx, nil)
+		return nil
+	}))
+	close(delChan)
+	checkErr(<-delErr)
+
+	if !oldOnly {
+		checkErr(f.Rmdir(ctx, dir))
+	}
+	return errReturn
+}
+
+// Purge deletes all the files and directories including the old versions.
+func (f *Fs) Purge(ctx context.Context, dir string) error {
+	return f.purge(ctx, dir, false)
+}
+
+// CleanUpHidden deletes all the hidden files.
+func (f *Fs) CleanUpHidden(ctx context.Context) error {
+	return f.purge(ctx, "", true)
 }
 
 // ------------------------------------------------------------
@@ -3752,6 +4333,10 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 	if t != hash.MD5 {
 		return "", hash.ErrUnsupported
 	}
+	// If decompressing, erase the hash
+	if o.bytes < 0 {
+		return "", nil
+	}
 	// If we haven't got an MD5, then check the metadata
 	if o.md5 == "" {
 		err := o.readMetaData(ctx)
@@ -3770,8 +4355,9 @@ func (o *Object) Size() int64 {
 func (o *Object) headObject(ctx context.Context) (resp *s3.HeadObjectOutput, err error) {
 	bucket, bucketPath := o.split()
 	req := s3.HeadObjectInput{
-		Bucket: &bucket,
-		Key:    &bucketPath,
+		Bucket:    &bucket,
+		Key:       &bucketPath,
+		VersionId: o.versionID,
 	}
 	if o.fs.opt.RequesterPays {
 		req.RequestPayer = aws.String(s3.RequestPayerRequester)
@@ -3872,6 +4458,12 @@ func (o *Object) setMetaData(resp *s3.HeadObjectOutput) {
 	o.contentDisposition = resp.ContentDisposition
 	o.contentEncoding = resp.ContentEncoding
 	o.contentLanguage = resp.ContentLanguage
+
+	// If decompressing then size and md5sum are unknown
+	if o.fs.opt.Decompress && aws.StringValue(o.contentEncoding) == "gzip" {
+		o.bytes = -1
+		o.md5 = ""
+	}
 }
 
 // ModTime returns the modification time of the object
@@ -4011,8 +4603,9 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	}
 
 	req := s3.GetObjectInput{
-		Bucket: &bucket,
-		Key:    &bucketPath,
+		Bucket:    &bucket,
+		Key:       &bucketPath,
+		VersionId: o.versionID,
 	}
 	if o.fs.opt.RequesterPays {
 		req.RequestPayer = aws.String(s3.RequestPayerRequester)
@@ -4028,6 +4621,11 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 	}
 	httpReq, resp := o.fs.c.GetObjectRequest(&req)
 	fs.FixRangeOption(options, o.bytes)
+
+	// Override the automatic decompression in the transport to
+	// download compressed files as-is
+	httpReq.HTTPRequest.Header.Set("Accept-Encoding", "gzip")
+
 	for _, option := range options {
 		switch option.(type) {
 		case *fs.RangeOption, *fs.SeekOption:
@@ -4074,15 +4672,27 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (in io.Read
 		}
 	}
 	var head s3.HeadObjectOutput
-	structs.SetFrom(&head, resp)
+	//structs.SetFrom(&head, resp)
+	setFrom_s3HeadObjectOutput_s3GetObjectOutput(&head, resp)
 	head.ContentLength = size
 	o.setMetaData(&head)
+
+	// Decompress body if necessary
+	if aws.StringValue(resp.ContentEncoding) == "gzip" {
+		if o.fs.opt.Decompress {
+			return readers.NewGzipReader(resp.Body)
+		}
+		o.fs.warnCompressed.Do(func() {
+			fs.Logf(o, "Not decompressing 'Content-Encoding: gzip' compressed file. Use --s3-decompress to override")
+		})
+	}
+
 	return resp.Body, nil
 }
 
 var warnStreamUpload sync.Once
 
-func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, err error) {
+func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, versionID *string, err error) {
 	f := o.fs
 
 	// make concurrency machinery
@@ -4117,7 +4727,8 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 	memPool := f.getMemoryPool(int64(partSize))
 
 	var mReq s3.CreateMultipartUploadInput
-	structs.SetFrom(&mReq, req)
+	//structs.SetFrom(&mReq, req)
+	setFrom_s3CreateMultipartUploadInput_s3PutObjectInput(&mReq, req)
 	var cout *s3.CreateMultipartUploadOutput
 	err = f.pacer.Call(func() (bool, error) {
 		var err error
@@ -4125,7 +4736,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		return f.shouldRetry(ctx, err)
 	})
 	if err != nil {
-		return etag, fmt.Errorf("multipart upload failed to initialise: %w", err)
+		return etag, nil, fmt.Errorf("multipart upload failed to initialise: %w", err)
 	}
 	uid := cout.UploadId
 
@@ -4198,7 +4809,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 			finished = true
 		} else if err != nil {
 			free()
-			return etag, fmt.Errorf("multipart upload failed to read source: %w", err)
+			return etag, nil, fmt.Errorf("multipart upload failed to read source: %w", err)
 		}
 		buf = buf[:n]
 
@@ -4253,7 +4864,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 	}
 	err = g.Wait()
 	if err != nil {
-		return etag, err
+		return etag, nil, err
 	}
 
 	// sort the completed parts by part number
@@ -4261,8 +4872,9 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		return *parts[i].PartNumber < *parts[j].PartNumber
 	})
 
+	var resp *s3.CompleteMultipartUploadOutput
 	err = f.pacer.Call(func() (bool, error) {
-		_, err := f.c.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+		resp, err = f.c.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
 			Bucket: req.Bucket,
 			Key:    req.Key,
 			MultipartUpload: &s3.CompletedMultipartUpload{
@@ -4274,11 +4886,14 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 		return f.shouldRetry(ctx, err)
 	})
 	if err != nil {
-		return etag, fmt.Errorf("multipart upload failed to finalise: %w", err)
+		return etag, nil, fmt.Errorf("multipart upload failed to finalise: %w", err)
 	}
 	hashOfHashes := md5.Sum(md5s)
 	etag = fmt.Sprintf("%s-%d", hex.EncodeToString(hashOfHashes[:]), len(parts))
-	return etag, nil
+	if resp != nil {
+		versionID = resp.VersionId
+	}
+	return etag, versionID, nil
 }
 
 // unWrapAwsError unwraps AWS errors, looking for a non AWS error
@@ -4305,7 +4920,7 @@ func unWrapAwsError(err error) (found bool, outErr error) {
 }
 
 // Upload a single part using PutObject
-func (o *Object) uploadSinglepartPutObject(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, err error) {
+func (o *Object) uploadSinglepartPutObject(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
 	r, resp := o.fs.c.PutObjectRequest(req)
 	if req.ContentLength != nil && *req.ContentLength == 0 {
 		// Can't upload zero length files like this for some reason
@@ -4332,15 +4947,18 @@ func (o *Object) uploadSinglepartPutObject(ctx context.Context, req *s3.PutObjec
 				err = newErr
 			}
 		}
-		return etag, lastModified, err
+		return etag, lastModified, nil, err
 	}
 	lastModified = time.Now()
-	etag = aws.StringValue(resp.ETag)
-	return etag, lastModified, nil
+	if resp != nil {
+		etag = aws.StringValue(resp.ETag)
+		versionID = resp.VersionId
+	}
+	return etag, lastModified, versionID, nil
 }
 
 // Upload a single part using a presigned request
-func (o *Object) uploadSinglepartPresignedRequest(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, err error) {
+func (o *Object) uploadSinglepartPresignedRequest(ctx context.Context, req *s3.PutObjectInput, size int64, in io.Reader) (etag string, lastModified time.Time, versionID *string, err error) {
 	// Create the request
 	putObj, _ := o.fs.c.PutObjectRequest(req)
 
@@ -4350,7 +4968,7 @@ func (o *Object) uploadSinglepartPresignedRequest(ctx context.Context, req *s3.P
 	// PutObject so we used this work-around.
 	url, headers, err := putObj.PresignRequest(15 * time.Minute)
 	if err != nil {
-		return etag, lastModified, fmt.Errorf("s3 upload: sign request: %w", err)
+		return etag, lastModified, nil, fmt.Errorf("s3 upload: sign request: %w", err)
 	}
 
 	if o.fs.opt.V2Auth && headers == nil {
@@ -4365,7 +4983,7 @@ func (o *Object) uploadSinglepartPresignedRequest(ctx context.Context, req *s3.P
 	// create the vanilla http request
 	httpReq, err := http.NewRequestWithContext(ctx, "PUT", url, in)
 	if err != nil {
-		return etag, lastModified, fmt.Errorf("s3 upload: new request: %w", err)
+		return etag, lastModified, nil, fmt.Errorf("s3 upload: new request: %w", err)
 	}
 
 	// set the headers we signed and the length
@@ -4390,19 +5008,26 @@ func (o *Object) uploadSinglepartPresignedRequest(ctx context.Context, req *s3.P
 		return fserrors.ShouldRetryHTTP(resp, retryErrorCodes), err
 	})
 	if err != nil {
-		return etag, lastModified, err
+		return etag, lastModified, nil, err
 	}
 	if resp != nil {
 		if date, err := http.ParseTime(resp.Header.Get("Date")); err != nil {
 			lastModified = date
 		}
 		etag = resp.Header.Get("Etag")
+		vID := resp.Header.Get("x-amz-version-id")
+		if vID != "" {
+			versionID = &vID
+		}
 	}
-	return etag, lastModified, nil
+	return etag, lastModified, versionID, nil
 }
 
 // Update the Object from in with modTime and size
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
+	if o.fs.opt.VersionAt.IsSet() {
+		return errNotWithVersionAt
+	}
 	bucket, bucketPath := o.split()
 	err := o.fs.makeBucket(ctx, bucket)
 	if err != nil {
@@ -4552,25 +5177,28 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 	var wantETag string        // Multipart upload Etag to check
 	var gotEtag string         // Etag we got from the upload
 	var lastModified time.Time // Time we got from the upload
+	var versionID *string      // versionID we got from the upload
 	if multipart {
-		wantETag, err = o.uploadMultipart(ctx, &req, size, in)
+		wantETag, versionID, err = o.uploadMultipart(ctx, &req, size, in)
 	} else {
 		if o.fs.opt.UsePresignedRequest {
-			gotEtag, lastModified, err = o.uploadSinglepartPresignedRequest(ctx, &req, size, in)
+			gotEtag, lastModified, versionID, err = o.uploadSinglepartPresignedRequest(ctx, &req, size, in)
 		} else {
-			gotEtag, lastModified, err = o.uploadSinglepartPutObject(ctx, &req, size, in)
+			gotEtag, lastModified, versionID, err = o.uploadSinglepartPutObject(ctx, &req, size, in)
 		}
 	}
 	if err != nil {
 		return err
 	}
+	o.versionID = versionID
 
 	// User requested we don't HEAD the object after uploading it
 	// so make up the object as best we can assuming it got
 	// uploaded properly. If size < 0 then we need to do the HEAD.
 	if o.fs.opt.NoHead && size >= 0 {
 		var head s3.HeadObjectOutput
-		structs.SetFrom(&head, &req)
+		//structs.SetFrom(&head, &req)
+		setFrom_s3HeadObjectOutput_s3PutObjectInput(&head, &req)
 		head.ETag = &md5sumHex // doesn't matter quotes are misssing
 		head.ContentLength = &size
 		// If we have done a single part PUT request then we can read these
@@ -4581,6 +5209,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 			lastModified = time.Now()
 		}
 		head.LastModified = &lastModified
+		head.VersionId = versionID
 		o.setMetaData(&head)
 		return nil
 	}
@@ -4604,10 +5233,14 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 
 // Remove an object
 func (o *Object) Remove(ctx context.Context) error {
+	if o.fs.opt.VersionAt.IsSet() {
+		return errNotWithVersionAt
+	}
 	bucket, bucketPath := o.split()
 	req := s3.DeleteObjectInput{
-		Bucket: &bucket,
-		Key:    &bucketPath,
+		Bucket:    &bucket,
+		Key:       &bucketPath,
+		VersionId: o.versionID,
 	}
 	if o.fs.opt.RequesterPays {
 		req.RequestPayer = aws.String(s3.RequestPayerRequester)
@@ -4702,6 +5335,7 @@ func (o *Object) Metadata(ctx context.Context) (metadata fs.Metadata, err error)
 // Check the interfaces are satisfied
 var (
 	_ fs.Fs          = &Fs{}
+	_ fs.Purger      = &Fs{}
 	_ fs.Copier      = &Fs{}
 	_ fs.PutStreamer = &Fs{}
 	_ fs.ListRer     = &Fs{}

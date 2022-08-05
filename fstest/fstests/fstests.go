@@ -189,7 +189,7 @@ var (
 
 // PutTestContentsMetadata puts file with given contents to the remote and checks it but unlike TestPutLarge doesn't remove
 //
-// It uploads the object with the mimeType and metadata passed in if set
+// It uploads the object with the mimeType and metadata passed in if set.
 //
 // It returns the object which will have been checked if check is set
 func PutTestContentsMetadata(ctx context.Context, t *testing.T, f fs.Fs, file *fstest.Item, contents string, check bool, mimeType string, metadata fs.Metadata) fs.Object {
@@ -294,8 +294,8 @@ func TestPutLarge(ctx context.Context, t *testing.T, f fs.Fs, file *fstest.Item)
 	require.NoError(t, obj.Remove(ctx))
 }
 
-// read the contents of an object as a string
-func readObject(ctx context.Context, t *testing.T, obj fs.Object, limit int64, options ...fs.OpenOption) string {
+// ReadObject reads the contents of an object as a string
+func ReadObject(ctx context.Context, t *testing.T, obj fs.Object, limit int64, options ...fs.OpenOption) string {
 	what := fmt.Sprintf("readObject(%q) limit=%d, options=%+v", obj, limit, options)
 	in, err := obj.Open(ctx, options...)
 	require.NoError(t, err, what)
@@ -361,6 +361,9 @@ func removeConfigID(s string) string {
 	}
 	return s
 }
+
+// InternalTestFiles is the state of the remote at the moment the internal tests are called
+var InternalTestFiles []fstest.Item
 
 // Run runs the basic integration tests for a remote using the options passed in.
 //
@@ -797,7 +800,7 @@ func Run(t *testing.T, opt *Opt) {
 			assert.NoError(t, out.Close())
 
 			obj := findObject(ctx, t, f, path)
-			assert.Equal(t, "abcdefghi", readObject(ctx, t, obj, -1), "contents of file differ")
+			assert.Equal(t, "abcdefghi", ReadObject(ctx, t, obj, -1), "contents of file differ")
 
 			assert.NoError(t, obj.Remove(ctx))
 			assert.NoError(t, f.Rmdir(ctx, "writer-at-subdir"))
@@ -1490,14 +1493,14 @@ func Run(t *testing.T, opt *Opt) {
 			t.Run("ObjectOpen", func(t *testing.T) {
 				skipIfNotOk(t)
 				obj := findObject(ctx, t, f, file1.Path)
-				assert.Equal(t, file1Contents, readObject(ctx, t, obj, -1), "contents of file1 differ")
+				assert.Equal(t, file1Contents, ReadObject(ctx, t, obj, -1), "contents of file1 differ")
 			})
 
 			// TestObjectOpenSeek tests that Open works with SeekOption
 			t.Run("ObjectOpenSeek", func(t *testing.T) {
 				skipIfNotOk(t)
 				obj := findObject(ctx, t, f, file1.Path)
-				assert.Equal(t, file1Contents[50:], readObject(ctx, t, obj, -1, &fs.SeekOption{Offset: 50}), "contents of file1 differ after seek")
+				assert.Equal(t, file1Contents[50:], ReadObject(ctx, t, obj, -1, &fs.SeekOption{Offset: 50}), "contents of file1 differ after seek")
 			})
 
 			// TestObjectOpenRange tests that Open works with RangeOption
@@ -1516,7 +1519,7 @@ func Run(t *testing.T, opt *Opt) {
 					{fs.RangeOption{Start: -1, End: 20}, 80, 100}, // if start is omitted this means get the final bytes
 					// {fs.RangeOption{Start: -1, End: -1}, 0, 100}, - this seems to work but the RFC doesn't define it
 				} {
-					got := readObject(ctx, t, obj, -1, &test.ro)
+					got := ReadObject(ctx, t, obj, -1, &test.ro)
 					foundAt := strings.Index(file1Contents, got)
 					help := fmt.Sprintf("%#v failed want [%d:%d] got [%d:%d]", test.ro, test.wantStart, test.wantEnd, foundAt, foundAt+len(got))
 					assert.Equal(t, file1Contents[test.wantStart:test.wantEnd], got, help)
@@ -1527,7 +1530,7 @@ func Run(t *testing.T, opt *Opt) {
 			t.Run("ObjectPartialRead", func(t *testing.T) {
 				skipIfNotOk(t)
 				obj := findObject(ctx, t, f, file1.Path)
-				assert.Equal(t, file1Contents[:50], readObject(ctx, t, obj, 50), "contents of file1 differ after limited read")
+				assert.Equal(t, file1Contents[:50], ReadObject(ctx, t, obj, 50), "contents of file1 differ after limited read")
 			})
 
 			// TestObjectUpdate tests that Update works
@@ -1553,7 +1556,7 @@ func Run(t *testing.T, opt *Opt) {
 				file1.Check(t, obj, f.Precision())
 
 				// check contents correct
-				assert.Equal(t, contents, readObject(ctx, t, obj, -1), "contents of updated file1 differ")
+				assert.Equal(t, contents, ReadObject(ctx, t, obj, -1), "contents of updated file1 differ")
 				file1Contents = contents
 			})
 
@@ -1813,6 +1816,9 @@ func Run(t *testing.T, opt *Opt) {
 				}
 			})
 
+			// State of remote at the moment the internal tests are called
+			InternalTestFiles = []fstest.Item{file1, file2}
+
 			// TestObjectRemove tests Remove
 			t.Run("ObjectRemove", func(t *testing.T) {
 				skipIfNotOk(t)
@@ -1822,6 +1828,8 @@ func Run(t *testing.T, opt *Opt) {
 				require.NoError(t, err)
 				// check listing without modtime as TestPublicLink may change the modtime
 				fstest.CheckListingWithPrecision(t, f, []fstest.Item{file2}, nil, fs.ModTimeNotSupported)
+				// Show the internal tests file2 is gone
+				InternalTestFiles = []fstest.Item{file2}
 			})
 
 			// TestAbout tests the About optional interface
