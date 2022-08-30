@@ -13,7 +13,7 @@ const (
 	PackageTypeOneNote = "oneNote"
 )
 
-// Error is returned from one drive when things go wrong
+// Error is returned from OneDrive when things go wrong
 type Error struct {
 	ErrorInfo struct {
 		Code       string `json:"code"`
@@ -70,7 +70,7 @@ type Drive struct {
 	Quota     Quota       `json:"quota"`
 }
 
-// Timestamp represents represents date and time information for the
+// Timestamp represents date and time information for the
 // OneDrive API, by using ISO 8601 and is always in UTC time.
 type Timestamp time.Time
 

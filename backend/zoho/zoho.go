@@ -150,8 +150,8 @@ func init() {
 					return workspace.ID, workspace.Attributes.Name
 				})
 			case "workspace_end":
-				worksspaceID := config.Result
-				m.Set(configRootID, worksspaceID)
+				workspaceID := config.Result
+				m.Set(configRootID, workspaceID)
 				return nil, nil
 			}
 			return nil, fmt.Errorf("unknown state %q", config.State)
@@ -206,7 +206,7 @@ type Fs struct {
 	root     string             // the path we are working on
 	opt      Options            // parsed options
 	features *fs.Features       // optional features
-	srv      *rest.Client       // the connection to the one drive server
+	srv      *rest.Client       // the connection to the server
 	dirCache *dircache.DirCache // Map of directory path to directory id
 	pacer    *fs.Pacer          // pacer for API calls
 }
@@ -1264,7 +1264,7 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 		return err
 	}
 
-	// upload was successfull, need to delete old object before rename
+	// upload was successful, need to delete old object before rename
 	if err = o.Remove(ctx); err != nil {
 		return fmt.Errorf("failed to remove old object: %w", err)
 	}
