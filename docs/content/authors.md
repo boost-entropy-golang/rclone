@@ -637,3 +637,6 @@ put them back in again.` >}}
   * Ryan Morey <4590343+rmorey@users.noreply.github.com>
   * Simon Bos <simonbos9@gmail.com>
   * YFdyh000 <yfdyh000@gmail.com>  * Josh Soref <2119212+jsoref@users.noreply.github.com>
+  * Øyvind Heddeland Instefjord <instefjord@outlook.com>
+  * Dmitry Deniskin <110819396+ddeniskin@users.noreply.github.com>
+  * Alexander Knorr <106825+opexxx@users.noreply.github.com>
