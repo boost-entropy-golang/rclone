@@ -660,3 +660,7 @@ put them back in again.` >}}
   * Arnie97 <arnie97@gmail.com>
   * Roel Arents <2691308+roelarents@users.noreply.github.com>
   * Aaron Gokaslan <aaronGokaslan@gmail.com>
+  * techknowlogick <matti@mdranta.net>
+  * rkettelerij <richard@mindloops.nl>
+  * Kamui <fin-kamui@pm.me>
+  * asdffdsazqqq <90116442+asdffdsazqqq@users.noreply.github.com>
