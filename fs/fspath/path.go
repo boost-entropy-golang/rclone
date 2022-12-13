@@ -13,12 +13,11 @@ import (
 )
 
 const (
-	configNameRe = `[\w_. -]+`
-	remoteNameRe = `^(:?` + configNameRe + `)`
+	configNameRe = `[\w\p{L}\p{N}.-]+(?: +[\w\p{L}\p{N}.-]+)*`
 )
 
 var (
-	errInvalidCharacters = errors.New("config name contains invalid characters - may only contain `0-9`, `A-Z`, `a-z`, `_`, `-`, `.` and space")
+	errInvalidCharacters = errors.New("config name contains invalid characters - may only contain numbers, letters, `_`, `-`, `.` and space, while not start or end with space")
 	errCantBeEmpty       = errors.New("can't use empty string as a path")
 	errCantStartWithDash = errors.New("config name starts with `-`")
 	errBadConfigParam    = errors.New("config parameters may only contain `0-9`, `A-Z`, `a-z` and `_`")
@@ -35,7 +34,7 @@ var (
 	configNameMatcher = regexp.MustCompile(`^` + configNameRe + `$`)
 
 	// remoteNameMatcher is a pattern to match an rclone remote name at the start of a config
-	remoteNameMatcher = regexp.MustCompile(`^` + remoteNameRe + `(:$|,)`)
+	remoteNameMatcher = regexp.MustCompile(`^:?` + configNameRe + `(?::$|,)`)
 )
 
 // CheckConfigName returns an error if configName is invalid
