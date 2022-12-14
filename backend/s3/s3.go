@@ -66,7 +66,7 @@ import (
 func init() {
 	fs.Register(&fs.RegInfo{
 		Name:        "s3",
-		Description: "Amazon S3 Compliant Storage Providers including AWS, Alibaba, Ceph, China Mobile, Cloudflare, ArvanCloud, Digital Ocean, Dreamhost, Huawei OBS, IBM COS, IDrive e2, IONOS Cloud, Liara, Lyve Cloud, Minio, Netease, RackCorp, Scaleway, SeaweedFS, StackPath, Storj, Tencent COS, Qiniu and Wasabi",
+		Description: "Amazon S3 Compliant Storage Providers including AWS, Alibaba, Ceph, China Mobile, Cloudflare, ArvanCloud, DigitalOcean, Dreamhost, Huawei OBS, IBM COS, IDrive e2, IONOS Cloud, Liara, Lyve Cloud, Minio, Netease, RackCorp, Scaleway, SeaweedFS, StackPath, Storj, Tencent COS, Qiniu and Wasabi",
 		NewFs:       NewFs,
 		CommandHelp: commandHelp,
 		Config: func(ctx context.Context, name string, m configmap.Mapper, config fs.ConfigIn) (*fs.ConfigOut, error) {
@@ -105,7 +105,7 @@ func init() {
 				Help:  "Arvan Cloud Object Storage (AOS)",
 			}, {
 				Value: "DigitalOcean",
-				Help:  "Digital Ocean Spaces",
+				Help:  "DigitalOcean Spaces",
 			}, {
 				Value: "Dreamhost",
 				Help:  "Dreamhost DreamObjects",
@@ -1110,16 +1110,28 @@ func init() {
 				Help:     "Dream Objects endpoint",
 				Provider: "Dreamhost",
 			}, {
+				Value:    "syd1.digitaloceanspaces.com",
+				Help:     "DigitalOcean Spaces Sydney 1",
+				Provider: "DigitalOcean",
+			}, {
+				Value:    "sfo3.digitaloceanspaces.com",
+				Help:     "DigitalOcean Spaces San Francisco 3",
+				Provider: "DigitalOcean",
+			}, {
+				Value:    "fra1.digitaloceanspaces.com",
+				Help:     "DigitalOcean Spaces Frankfurt 1",
+				Provider: "DigitalOcean",
+			}, {
 				Value:    "nyc3.digitaloceanspaces.com",
-				Help:     "Digital Ocean Spaces New York 3",
+				Help:     "DigitalOcean Spaces New York 3",
 				Provider: "DigitalOcean",
 			}, {
 				Value:    "ams3.digitaloceanspaces.com",
-				Help:     "Digital Ocean Spaces Amsterdam 3",
+				Help:     "DigitalOcean Spaces Amsterdam 3",
 				Provider: "DigitalOcean",
 			}, {
 				Value:    "sgp1.digitaloceanspaces.com",
-				Help:     "Digital Ocean Spaces Singapore 1",
+				Help:     "DigitalOcean Spaces Singapore 1",
 				Provider: "DigitalOcean",
 			}, {
 				Value:    "localhost:8333",
@@ -2755,7 +2767,6 @@ func setQuirks(opt *Options) {
 		mightGzip = false // Never auto gzips objects
 	case "Alibaba":
 		useMultipartEtag = false // Alibaba seems to calculate multipart Etags differently from AWS
-		listObjectsV2 = false    // See #6600
 	case "HuaweiOBS":
 		// Huawei OBS PFS is not support listObjectV2, and if turn on the urlEncodeListing, marker will not work and keep list same page forever.
 		urlEncodeListings = false
@@ -3094,7 +3105,7 @@ func (f *Fs) newObjectWithInfo(ctx context.Context, remote string, info *s3.Obje
 		o.setMD5FromEtag(aws.StringValue(info.ETag))
 		o.bytes = aws.Int64Value(info.Size)
 		o.storageClass = stringClonePointer(info.StorageClass)
-		o.versionID = versionID
+		o.versionID = stringClonePointer(versionID)
 	} else if !o.fs.opt.NoHeadObject {
 		err := o.readMetaData(ctx) // reads info and meta, returning an error
 		if err != nil {
@@ -3235,8 +3246,8 @@ func (ls *v2List) List(ctx context.Context) (resp *s3.ListObjectsV2Output, versi
 	if err != nil {
 		return nil, nil, err
 	}
-	if aws.BoolValue(resp.IsTruncated) && (resp.ContinuationToken == nil || *resp.ContinuationToken == "") {
-		return nil, nil, errors.New("s3 protocol error: received listing v2 with IsTruncated set and no ContinuationToken. Should you be using `--s3-list-version 1`?")
+	if aws.BoolValue(resp.IsTruncated) && (resp.NextContinuationToken == nil || *resp.NextContinuationToken == "") {
+		return nil, nil, errors.New("s3 protocol error: received listing v2 with IsTruncated set and no NextContinuationToken. Should you be using `--s3-list-version 1`?")
 	}
 	ls.req.ContinuationToken = resp.NextContinuationToken
 	return resp, nil, nil
