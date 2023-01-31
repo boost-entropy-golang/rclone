@@ -678,3 +678,6 @@ put them back in again.` >}}
   * Kaloyan Raev <kaloyan-raev@users.noreply.github.com>
   * IMTheNachoMan <imthenachoman@gmail.com>
   * alankrit <alankrit@google.com>
+  * Bryan Kaplan <#@bryankaplan.com>
+  * LXY <767763591@qq.com>
+  * Simmon Li (he/him) <li.simmon@gmail.com>
