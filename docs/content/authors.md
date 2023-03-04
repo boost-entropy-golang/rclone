@@ -684,3 +684,8 @@ put them back in again.` >}}
   * happyxhw <44490504+happyxhw@users.noreply.github.com>
   * Simmon Li (he/him) <hello@crespire.dev>
   * Matthias Baur <baurmatt@users.noreply.github.com>
+  * Hunter Wittenborn <hunter@hunterwittenborn.com>
+  * logopk <peter@kreuser.name>
+  * Gerard Bosch <30733556+gerardbosch@users.noreply.github.com>
+  * ToBeFree <github@tfrei.de>
+  * NodudeWasTaken <75137537+NodudeWasTaken@users.noreply.github.com>

@@ -329,7 +329,7 @@ func (s *syncCopyMove) pairChecker(in *pipe, out *pipe, fraction int, wg *sync.W
 		}
 		src := pair.Src
 		var err error
-		tr := accounting.Stats(s.ctx).NewCheckingTransfer(src)
+		tr := accounting.Stats(s.ctx).NewCheckingTransfer(src, "checking")
 		// Check to see if can store this
 		if src.Storable() {
 			needTransfer := operations.NeedTransfer(s.ctx, pair.Dst, pair.Src)
@@ -537,7 +537,7 @@ func (s *syncCopyMove) deleteFiles(checkSrcMap bool) error {
 	}
 
 	// Delete the spare files
-	toDelete := make(fs.ObjectsChan, s.ci.Transfers)
+	toDelete := make(fs.ObjectsChan, s.ci.Checkers)
 	go func() {
 	outer:
 		for remote, o := range s.dstFiles {
@@ -772,14 +772,14 @@ func (s *syncCopyMove) makeRenameMap() {
 	// now make a map of size,hash for all dstFiles
 	s.renameMap = make(map[string][]fs.Object)
 	var wg sync.WaitGroup
-	wg.Add(s.ci.Transfers)
-	for i := 0; i < s.ci.Transfers; i++ {
+	wg.Add(s.ci.Checkers)
+	for i := 0; i < s.ci.Checkers; i++ {
 		go func() {
 			defer wg.Done()
 			for obj := range in {
 				// only create hash for dst fs.Object if its size could match
 				if _, found := possibleSizes[obj.Size()]; found {
-					tr := accounting.Stats(s.ctx).NewCheckingTransfer(obj)
+					tr := accounting.Stats(s.ctx).NewCheckingTransfer(obj, "renaming")
 					hash := s.renameID(obj, s.trackRenamesStrategy, s.modifyWindow)
 
 					if hash != "" {
