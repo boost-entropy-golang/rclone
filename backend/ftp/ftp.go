@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rclone/ftp"
+	"github.com/jlaffaye/ftp"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/config"
@@ -315,18 +315,26 @@ func (dl *debugLog) Write(p []byte) (n int, err error) {
 	return len(p), nil
 }
 
+// returns true if this FTP error should be retried
+func isRetriableFtpError(err error) bool {
+	switch errX := err.(type) {
+	case *textproto.Error:
+		switch errX.Code {
+		case ftp.StatusNotAvailable, ftp.StatusTransfertAborted:
+			return true
+		}
+	}
+	return false
+}
+
 // shouldRetry returns a boolean as to whether this err deserve to be
 // retried.  It returns the err as a convenience
 func shouldRetry(ctx context.Context, err error) (bool, error) {
 	if fserrors.ContextError(ctx, &err) {
 		return false, err
 	}
-	switch errX := err.(type) {
-	case *textproto.Error:
-		switch errX.Code {
-		case ftp.StatusNotAvailable:
-			return true, err
-		}
+	if isRetriableFtpError(err) {
+		return true, err
 	}
 	return fserrors.ShouldRetry(err), err
 }
@@ -1186,15 +1194,26 @@ func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (rc io.Read
 			}
 		}
 	}
-	c, err := o.fs.getFtpConnection(ctx)
+
+	var (
+		fd *ftp.Response
+		c  *ftp.ServerConn
+	)
+	err = o.fs.pacer.Call(func() (bool, error) {
+		c, err = o.fs.getFtpConnection(ctx)
+		if err != nil {
+			return false, err // getFtpConnection has retries already
+		}
+		fd, err = c.RetrFrom(o.fs.opt.Enc.FromStandardPath(path), uint64(offset))
+		if err != nil {
+			o.fs.putFtpConnection(&c, err)
+		}
+		return shouldRetry(ctx, err)
+	})
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	fd, err := c.RetrFrom(o.fs.opt.Enc.FromStandardPath(path), uint64(offset))
-	if err != nil {
-		o.fs.putFtpConnection(&c, err)
-		return nil, fmt.Errorf("open: %w", err)
-	}
+
 	rc = &ftpReadCloser{rc: readers.NewLimitedReadCloser(fd, limit), c: c, f: o.fs}
 	return rc, nil
 }

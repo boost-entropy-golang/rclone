@@ -32,6 +32,7 @@ require (
 	github.com/hirochachacha/go-smb2 v1.1.0
 	github.com/iguanesolutions/go-systemd/v5 v5.1.0
 	github.com/jcmturner/gokrb5/v8 v8.4.3
+	github.com/jlaffaye/ftp v0.1.1-0.20230214004652-d84bf4be2b6e
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004
 	github.com/klauspost/compress v1.15.14
 	github.com/koofr/go-httpclient v0.0.0-20221124135700-2eb26cff5dd8
@@ -47,7 +48,6 @@ require (
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/prometheus/client_golang v1.14.0
 	github.com/putdotio/go-putio/putio v0.0.0-20200123120452-16d982cac2b8
-	github.com/rclone/ftp v0.0.0-20221014110213-e44dedbc76c6
 	github.com/rfjakob/eme v1.1.2
 	github.com/rivo/uniseg v0.4.3
 	github.com/shirou/gopsutil/v3 v3.22.12
@@ -62,7 +62,7 @@ require (
 	github.com/youmark/pkcs8 v0.0.0-20201027041543-1326539a0a0a
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0
 	go.etcd.io/bbolt v1.3.6
-	goftp.io/server v0.4.1
+	goftp.io/server v0.4.2-0.20210615155358-d07a820aac35
 	golang.org/x/crypto v0.5.0
 	golang.org/x/net v0.7.0
 	golang.org/x/oauth2 v0.4.0

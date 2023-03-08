@@ -141,6 +141,13 @@ func (f *File) Node() Node {
 	return f
 }
 
+// renameDir - call when parent directory has been renamed
+func (f *File) renameDir(dPath string) {
+	f.mu.RLock()
+	f.dPath = dPath
+	f.mu.RUnlock()
+}
+
 // applyPendingRename runs a previously set rename operation if there are no
 // more remaining writers. Call without lock held.
 func (f *File) applyPendingRename() {
@@ -296,6 +303,9 @@ func (f *File) activeWriters() int {
 // It should be called with the lock held
 func (f *File) _roundModTime(modTime time.Time) time.Time {
 	precision := f.d.f.Precision()
+	if precision == fs.ModTimeNotSupported {
+		return modTime
+	}
 	return modTime.Truncate(precision)
 }
 

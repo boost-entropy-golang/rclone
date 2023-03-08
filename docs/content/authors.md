@@ -689,3 +689,7 @@ put them back in again.` >}}
   * Gerard Bosch <30733556+gerardbosch@users.noreply.github.com>
   * ToBeFree <github@tfrei.de>
   * NodudeWasTaken <75137537+NodudeWasTaken@users.noreply.github.com>
+  * Peter Brunner <peter@lugoues.net>
+  * Ninh Pham <dongian.rapclubkhtn@gmail.com>
+  * Ryan Caezar Itang <sitiom@proton.me>
+  * Peter Brunner <peter@psykhe.com>
