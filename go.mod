@@ -4,8 +4,8 @@ go 1.18
 
 require (
 	bazil.org/fuse v0.0.0-20221209211307-2abb8038c751
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.3.0
-	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.2.0
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.4.0
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.2.2
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.6.1
 	github.com/Azure/go-ntlmssp v0.0.0-20221128193559-754e69321358
 	github.com/Max-Sum/base32768 v0.0.0-20191205131208-7937843c71d5
@@ -25,12 +25,12 @@ require (
 	github.com/dop251/scsu v0.0.0-20220106150536-84ac88021d00
 	github.com/dropbox/dropbox-sdk-go-unofficial/v6 v6.0.5
 	github.com/gabriel-vasile/mimetype v1.4.1
-	github.com/gdamore/tcell/v2 v2.5.4
+	github.com/gdamore/tcell/v2 v2.6.0
 	github.com/go-chi/chi/v5 v5.0.8
 	github.com/google/uuid v1.3.0
 	github.com/hanwen/go-fuse/v2 v2.2.0
 	github.com/hirochachacha/go-smb2 v1.1.0
-	github.com/iguanesolutions/go-systemd/v5 v5.1.0
+	github.com/iguanesolutions/go-systemd/v5 v5.1.1
 	github.com/jcmturner/gokrb5/v8 v8.4.3
 	github.com/jlaffaye/ftp v0.1.1-0.20230214004652-d84bf4be2b6e
 	github.com/jzelinskie/whirlpool v0.0.0-20201016144138-0675e54bb004
@@ -63,11 +63,11 @@ require (
 	github.com/yunify/qingstor-sdk-go/v3 v3.2.0
 	go.etcd.io/bbolt v1.3.6
 	goftp.io/server v0.4.2-0.20210615155358-d07a820aac35
-	golang.org/x/crypto v0.5.0
+	golang.org/x/crypto v0.6.0
 	golang.org/x/net v0.7.0
 	golang.org/x/oauth2 v0.4.0
 	golang.org/x/sync v0.1.0
-	golang.org/x/sys v0.5.0
+	golang.org/x/sys v0.6.0
 	golang.org/x/text v0.7.0
 	golang.org/x/time v0.3.0
 	google.golang.org/api v0.106.0
@@ -78,8 +78,8 @@ require (
 require (
 	cloud.google.com/go/compute v1.14.0 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.1.1 // indirect
-	github.com/AzureAD/microsoft-authentication-library-for-go v0.7.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.2.0 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v0.9.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/calebcase/tmpfile v1.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.1.2 // indirect
@@ -113,7 +113,7 @@ require (
 	github.com/mattn/go-isatty v0.0.16 // indirect
 	github.com/matttproud/golang_protobuf_extensions v1.0.1 // indirect
 	github.com/pengsrc/go-shared v0.2.1-0.20190131101655-1999055a4a14 // indirect
-	github.com/pkg/browser v0.0.0-20210115035449-ce105d075bb4 // indirect
+	github.com/pkg/browser v0.0.0-20210911075715-681adbf594b8 // indirect
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/prometheus/client_model v0.3.0 // indirect
 	github.com/prometheus/common v0.37.0 // indirect
@@ -141,10 +141,10 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.5.2 // indirect
 	github.com/ProtonMail/go-crypto v0.0.0-20230109192245-7efeeb08f296
-	github.com/golang-jwt/jwt/v4 v4.4.2 // indirect
+	github.com/golang-jwt/jwt/v4 v4.5.0 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
 	github.com/pkg/xattr v0.4.9
 	golang.org/x/mobile v0.0.0-20221110043201-43a038452099
-	golang.org/x/term v0.5.0
+	golang.org/x/term v0.6.0
 )

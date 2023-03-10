@@ -632,14 +632,13 @@ func SuffixName(ctx context.Context, remote string) string {
 // If backupDir is set then it moves the file to there instead of
 // deleting
 func DeleteFileWithBackupDir(ctx context.Context, dst fs.Object, backupDir fs.Fs) (err error) {
-	ci := fs.GetConfig(ctx)
 	tr := accounting.Stats(ctx).NewCheckingTransfer(dst, "deleting")
 	defer func() {
 		tr.Done(ctx, err)
 	}()
-	numDeletes := accounting.Stats(ctx).Deletes(1)
-	if ci.MaxDelete != -1 && numDeletes > ci.MaxDelete {
-		return fserrors.FatalError(errors.New("--max-delete threshold reached"))
+	err = accounting.Stats(ctx).DeleteFile(ctx, dst.Size())
+	if err != nil {
+		return err
 	}
 	action, actioned := "delete", "Deleted"
 	if backupDir != nil {
