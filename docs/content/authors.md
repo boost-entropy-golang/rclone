@@ -597,6 +597,7 @@ put them back in again.` >}}
   * Christian Galo <36752715+cgalo5758@users.noreply.github.com>
   * Erik van Velzen <erik@evanv.nl>
   * Derek Battams <derek@battams.ca>
+  * Paul <devnoname120@gmail.com>
   * SimonLiu <simonliu009@users.noreply.github.com>
   * Hugo Laloge <hla@lescompanions.com>
   * Mr-Kanister <68117355+Mr-Kanister@users.noreply.github.com>
@@ -696,3 +697,7 @@ put them back in again.` >}}
   * Leandro Sacchet <leandro.sacchet@animati.com.br>
   * dependabot[bot] <49699333+dependabot[bot]@users.noreply.github.com>
   * cycneuramus <56681631+cycneuramus@users.noreply.github.com>
+  * Arnavion <me@arnavion.dev>
+  * Christopher Merry <christopher.merry@mlb.com>
+  * Thibault Coupin <thibault.coupin@gmail.com>
+  * Richard Tweed <RichardoC@users.noreply.github.com>
