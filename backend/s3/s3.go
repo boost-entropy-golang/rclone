@@ -1912,9 +1912,6 @@ size (e.g. from "rclone rcat" or uploaded with "rclone mount" or google
 photos or google docs) they will be uploaded as multipart uploads
 using this chunk size.
 
-Files with no source MD5 will also be uploaded with multipart uploads
-as will all files if --s3-disable-checksum is set.
-
 Note that "--s3-upload-concurrency" chunks of this size are buffered
 in memory per transfer.
 
@@ -1970,11 +1967,7 @@ The minimum is 0 and the maximum is 5 GiB.`,
 Normally rclone will calculate the MD5 checksum of the input before
 uploading it so it can add it to metadata on the object. This is great
 for data integrity checking but can cause long delays for large files
-to start uploading.
-
-Note that setting this flag forces all uploads to be multipart uploads
-as we can't protect the body of the transfer unless we have an MD5.
-`,
+to start uploading.`,
 			Default:  false,
 			Advanced: true,
 		}, {
@@ -3126,6 +3119,7 @@ func (f *Fs) getMetaDataListing(ctx context.Context, wantRemote string) (info *s
 	err = f.list(ctx, listOpt{
 		bucket:       bucket,
 		directory:    bucketPath,
+		prefix:       f.rootDirectory,
 		recurse:      true,
 		withVersions: f.opt.Versions,
 		findFile:     true,
@@ -3531,10 +3525,10 @@ type listOpt struct {
 // list lists the objects into the function supplied with the opt
 // supplied.
 func (f *Fs) list(ctx context.Context, opt listOpt, fn listFn) error {
+	if opt.prefix != "" {
+		opt.prefix += "/"
+	}
 	if !opt.findFile {
-		if opt.prefix != "" {
-			opt.prefix += "/"
-		}
 		if opt.directory != "" {
 			opt.directory += "/"
 		}
@@ -5128,7 +5122,9 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 	}
 	uid := cout.UploadId
 
+	uploadCtx, cancel := context.WithCancel(ctx)
 	defer atexit.OnError(&err, func() {
+		cancel()
 		if o.fs.opt.LeavePartsOnError {
 			return
 		}
@@ -5148,7 +5144,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 	})()
 
 	var (
-		g, gCtx  = errgroup.WithContext(ctx)
+		g, gCtx  = errgroup.WithContext(uploadCtx)
 		finished = false
 		partsMu  sync.Mutex // to protect parts
 		parts    []*s3.CompletedPart
@@ -5230,7 +5226,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 				uout, err := f.c.UploadPartWithContext(gCtx, uploadPartReq)
 				if err != nil {
 					if partNum <= int64(concurrency) {
-						return f.shouldRetry(ctx, err)
+						return f.shouldRetry(gCtx, err)
 					}
 					// retry all chunks once have done the first batch
 					return true, err
@@ -5262,7 +5258,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 
 	var resp *s3.CompleteMultipartUploadOutput
 	err = f.pacer.Call(func() (bool, error) {
-		resp, err = f.c.CompleteMultipartUploadWithContext(ctx, &s3.CompleteMultipartUploadInput{
+		resp, err = f.c.CompleteMultipartUploadWithContext(uploadCtx, &s3.CompleteMultipartUploadInput{
 			Bucket: req.Bucket,
 			Key:    req.Key,
 			MultipartUpload: &s3.CompletedMultipartUpload{
@@ -5271,7 +5267,7 @@ func (o *Object) uploadMultipart(ctx context.Context, req *s3.PutObjectInput, si
 			RequestPayer: req.RequestPayer,
 			UploadId:     uid,
 		})
-		return f.shouldRetry(ctx, err)
+		return f.shouldRetry(uploadCtx, err)
 	})
 	if err != nil {
 		return wantETag, gotETag, nil, fmt.Errorf("multipart upload failed to finalise: %w", err)
@@ -5506,12 +5502,6 @@ func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, op
 				}
 			}
 		}
-	}
-	// If source MD5SUM not available then do multipart upload
-	// otherwise uploads are not hash protected and locked buckets
-	// will complain #6846
-	if !multipart && md5sumHex == "" {
-		multipart = true
 	}
 
 	// Set the content type it it isn't set already

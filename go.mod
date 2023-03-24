@@ -17,7 +17,7 @@ require (
 	github.com/anacrolix/log v0.13.1
 	github.com/artyom/mtab v1.0.0
 	github.com/atotto/clipboard v0.1.4
-	github.com/aws/aws-sdk-go v1.44.223
+	github.com/aws/aws-sdk-go v1.44.227
 	github.com/buengese/sgzip v0.1.1
 	github.com/colinmarc/hdfs/v2 v2.3.0
 	github.com/coreos/go-semver v0.3.1
@@ -42,7 +42,7 @@ require (
 	github.com/mitchellh/go-homedir v1.1.0
 	github.com/ncw/go-acd v0.0.0-20201019170801-fe55f33415b1
 	github.com/ncw/swift/v2 v2.0.1
-	github.com/oracle/oci-go-sdk/v65 v65.32.1
+	github.com/oracle/oci-go-sdk/v65 v65.33.0
 	github.com/patrickmn/go-cache v2.1.0+incompatible
 	github.com/pkg/sftp v1.13.6-0.20230213180117-971c283182b6
 	github.com/pmezard/go-difflib v1.0.0

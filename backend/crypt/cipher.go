@@ -21,6 +21,7 @@ import (
 	"github.com/rclone/rclone/backend/crypt/pkcs7"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
+	"github.com/rclone/rclone/lib/readers"
 	"github.com/rclone/rclone/lib/version"
 	"github.com/rfjakob/eme"
 	"golang.org/x/crypto/nacl/secretbox"
@@ -178,6 +179,7 @@ type Cipher struct {
 	buffers        sync.Pool // encrypt/decrypt buffers
 	cryptoRand     io.Reader // read crypto random numbers from here
 	dirNameEncrypt bool
+	passBadBlocks  bool // if set passed bad blocks as zeroed blocks
 }
 
 // newCipher initialises the cipher.  If salt is "" then it uses a built in salt val
@@ -196,6 +198,11 @@ func newCipher(mode NameEncryptionMode, password, salt string, dirNameEncrypt bo
 		return nil, err
 	}
 	return c, nil
+}
+
+// Call to set bad block pass through
+func (c *Cipher) setPassBadBlocks(passBadBlocks bool) {
+	c.passBadBlocks = passBadBlocks
 }
 
 // Key creates all the internal keys from the password passed in using
@@ -609,7 +616,7 @@ func (n *nonce) pointer() *[fileNonceSize]byte {
 // fromReader fills the nonce from an io.Reader - normally the OSes
 // crypto random number generator
 func (n *nonce) fromReader(in io.Reader) error {
-	read, err := io.ReadFull(in, (*n)[:])
+	read, err := readers.ReadFill(in, (*n)[:])
 	if read != fileNonceSize {
 		return fmt.Errorf("short read of nonce: %w", err)
 	}
@@ -708,14 +715,12 @@ func (fh *encrypter) Read(p []byte) (n int, err error) {
 		// Read data
 		// FIXME should overlap the reads with a go-routine and 2 buffers?
 		readBuf := fh.readBuf[:blockDataSize]
-		n, err = io.ReadFull(fh.in, readBuf)
+		n, err = readers.ReadFill(fh.in, readBuf)
 		if n == 0 {
-			// err can't be nil since:
-			// n == len(buf) if and only if err == nil.
 			return fh.finish(err)
 		}
 		// possibly err != nil here, but we will process the
-		// data and the next call to ReadFull will return 0, err
+		// data and the next call to ReadFill will return 0, err
 		// Encrypt the block using the nonce
 		secretbox.Seal(fh.buf[:0], readBuf[:n], fh.nonce.pointer(), &fh.c.dataKey)
 		fh.bufIndex = 0
@@ -783,8 +788,8 @@ func (c *Cipher) newDecrypter(rc io.ReadCloser) (*decrypter, error) {
 	}
 	// Read file header (magic + nonce)
 	readBuf := fh.readBuf[:fileHeaderSize]
-	_, err := io.ReadFull(fh.rc, readBuf)
-	if err == io.EOF || err == io.ErrUnexpectedEOF {
+	n, err := readers.ReadFill(fh.rc, readBuf)
+	if n < fileHeaderSize && err == io.EOF {
 		// This read from 0..fileHeaderSize-1 bytes
 		return nil, fh.finishAndClose(ErrorEncryptedFileTooShort)
 	} else if err != nil {
@@ -845,10 +850,8 @@ func (c *Cipher) newDecrypterSeek(ctx context.Context, open OpenRangeSeek, offse
 func (fh *decrypter) fillBuffer() (err error) {
 	// FIXME should overlap the reads with a go-routine and 2 buffers?
 	readBuf := fh.readBuf
-	n, err := io.ReadFull(fh.rc, readBuf)
+	n, err := readers.ReadFill(fh.rc, readBuf)
 	if n == 0 {
-		// err can't be nil since:
-		// n == len(buf) if and only if err == nil.
 		return err
 	}
 	// possibly err != nil here, but we will process the data and
@@ -856,7 +859,7 @@ func (fh *decrypter) fillBuffer() (err error) {
 
 	// Check header + 1 byte exists
 	if n <= blockHeaderSize {
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return err // return pending error as it is likely more accurate
 		}
 		return ErrorEncryptedFileBadHeader
@@ -864,10 +867,17 @@ func (fh *decrypter) fillBuffer() (err error) {
 	// Decrypt the block using the nonce
 	_, ok := secretbox.Open(fh.buf[:0], readBuf[:n], fh.nonce.pointer(), &fh.c.dataKey)
 	if !ok {
-		if err != nil {
+		if err != nil && err != io.EOF {
 			return err // return pending error as it is likely more accurate
 		}
-		return ErrorEncryptedBadBlock
+		if !fh.c.passBadBlocks {
+			return ErrorEncryptedBadBlock
+		}
+		fs.Errorf(nil, "crypt: ignoring: %v", ErrorEncryptedBadBlock)
+		// Zero out the bad block and continue
+		for i := range fh.buf[:n] {
+			fh.buf[i] = 0
+		}
 	}
 	fh.bufIndex = 0
 	fh.bufSize = n - blockHeaderSize
