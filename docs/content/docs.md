@@ -1002,9 +1002,23 @@ To see a list of which features can be disabled use:
 
     --disable help
 
+The features a remote has can be seen in JSON format with:
+
+    rclone backend features remote:
+
 See the overview [features](/overview/#features) and
 [optional features](/overview/#optional-features) to get an idea of
 which feature does what.
+
+Note that some features can be set to `true` if they are `true`/`false`
+feature flag features by prefixing them with `!`. For example the
+`CaseInsensitive` feature can be forced to `false` with `--disable CaseInsensitive`
+and forced to `true` with `--disable '!CaseInsensitive'`. In general
+it isn't a good idea doing this but it may be useful in extremis.
+
+(Note that `!` is a shell command which you will
+need to escape with single quotes or a backslash on unix like
+platforms.)
 
 This flag can be useful for debugging and in exceptional circumstances
 (e.g. Google Drive limiting the total volume of Server Side Copies to
@@ -1839,6 +1853,12 @@ So let's say we had `--suffix -2019-01-01`, without the flag `file.txt`
 would be backed up to `file.txt-2019-01-01` and with the flag it would
 be backed up to `file-2019-01-01.txt`.  This can be helpful to make
 sure the suffixed files can still be opened.
+
+If a file has two (or more) extensions and the second (or subsequent)
+extension is recognised as a valid mime type, then the suffix will go
+before that extension. So `file.tar.gz` would be backed up to
+`file-2019-01-01.tar.gz` whereas `file.badextension.gz` would be
+backed up to `file.badextension-2019-01-01.gz`.
 
 ### --syslog ###
 

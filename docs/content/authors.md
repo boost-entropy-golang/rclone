@@ -702,3 +702,9 @@ put them back in again.` >}}
   * Thibault Coupin <thibault.coupin@gmail.com>
   * Richard Tweed <RichardoC@users.noreply.github.com>
   * Zach Kipp <Zacho2@users.noreply.github.com>
+  * yuudi <26199752+yuudi@users.noreply.github.com>
+  * NickIAm <NickIAm@users.noreply.github.com>
+  * Juang, Yi-Lin <frankyjuang@gmail.com>
+  * jumbi77 <jumbi77@users.noreply.github.com>
+  * Aditya Basu <ab.aditya.basu@gmail.com>
+  * ed <s@ocv.me>
