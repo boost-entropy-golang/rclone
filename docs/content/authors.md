@@ -732,3 +732,9 @@ put them back in again.` >}}
   * Sam Lai <70988+slai@users.noreply.github.com>
   * URenko <18209292+URenko@users.noreply.github.com>
   * Stanislav Gromov <kullfar@gmail.com>
+  * Paulo Schreiner <paulo.schreiner@delivion.de>
+  * Mariusz Suchodolski <mariusz@suchodol.ski>
+  * danielkrajnik <dan94kra@gmail.com>
+  * Peter Fern <github@0xc0dedbad.com>
+  * zzq <i@zhangzqs.cn>
+  * mac-15 <usman.ilamdin@phpstudios.com>
