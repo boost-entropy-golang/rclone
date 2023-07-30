@@ -168,7 +168,19 @@ E.g. if shared folders can be found in directories representing volumes:
 
 E.g. if home directory can be found in a shared folder called "home":
 
-    rclone sync /home/local/directory remote:/home/directory --sftp-path-override /volume1/homes/USER/directory`,
+    rclone sync /home/local/directory remote:/home/directory --sftp-path-override /volume1/homes/USER/directory
+	
+To specify only the path to the SFTP remote's root, and allow rclone to add any relative subpaths automatically (including unwrapping/decrypting remotes as necessary), add the '@' character to the beginning of the path.
+
+E.g. the first example above could be rewritten as:
+
+	rclone sync /home/local/directory remote:/directory --sftp-path-override @/volume2
+	
+Note that when using this method with Synology "home" folders, the full "/homes/USER" path should be specified instead of "/home".
+
+E.g. the second example above should be rewritten as:
+
+	rclone sync /home/local/directory remote:/homes/USER/directory --sftp-path-override @/volume1`,
 			Advanced: true,
 		}, {
 			Name:     "set_modtime",
@@ -416,6 +428,17 @@ An example setting might be:
 Note that when using an external ssh binary rclone makes a new ssh
 connection for every hash it calculates.
 `,
+		}, {
+			Name:    "socks_proxy",
+			Default: "",
+			Help: `Socks 5 proxy host.
+	
+Supports the format user:pass@host:port, user@host:port, host:port.
+
+Example:
+
+	myUser:myPass@localhost:9005
+	`,
 			Advanced: true,
 		}},
 	}
@@ -457,6 +480,7 @@ type Options struct {
 	MACs                    fs.SpaceSepList `config:"macs"`
 	HostKeyAlgorithms       fs.SpaceSepList `config:"host_key_algorithms"`
 	SSH                     fs.SpaceSepList `config:"ssh"`
+	SocksProxy              string          `config:"socks_proxy"`
 }
 
 // Fs stores the interface to the remote SFTP files
@@ -1751,6 +1775,9 @@ func (f *Fs) remotePath(remote string) string {
 func (f *Fs) remoteShellPath(remote string) string {
 	if f.opt.PathOverride != "" {
 		shellPath := path.Join(f.opt.PathOverride, remote)
+		if f.opt.PathOverride[0] == '@' {
+			shellPath = path.Join(strings.TrimPrefix(f.opt.PathOverride, "@"), f.absRoot, remote)
+		}
 		fs.Debugf(f, "Shell path redirected to %q with option path_override", shellPath)
 		return shellPath
 	}
