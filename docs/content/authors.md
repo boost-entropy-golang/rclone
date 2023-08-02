@@ -753,3 +753,5 @@ put them back in again.` >}}
   * Edwin Mackenzie-Owen <edwin.mowen@gmail.com>
   * Niklas Hambüchen <mail@nh2.me>
   * yuudi <yuudi@users.noreply.github.com>
+  * Zach <github@prozach.org>
+  * nielash <31582349+nielash@users.noreply.github.com>
