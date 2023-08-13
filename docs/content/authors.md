@@ -761,3 +761,6 @@ put them back in again.` >}}
   * Masamune3210 <1053504+Masamune3210@users.noreply.github.com>
   * James Braza <jamesbraza@gmail.com>
   * antoinetran <antoinetran@users.noreply.github.com>
+  * alexia <me@alexia.lol>
+  * nielash <nielronash@gmail.com>
+  * Vitor Gomes <vitor.gomes@delivion.de> <mail@vitorgomes.com>
