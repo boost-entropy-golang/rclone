@@ -313,6 +313,8 @@ func (s *StatsInfo) calculateTransferStats() (ts transferStats) {
 	// we take it off here to avoid double counting
 	ts.totalBytes = s.transferQueueSize + s.bytes + transferringBytesTotal - transferringBytesDone
 	ts.speed = s.average.speed
+	dt := s.totalDuration()
+	ts.transferTime = dt.Seconds()
 
 	return ts
 }
@@ -777,7 +779,7 @@ func (s *StatsInfo) DoneTransferring(remote string, ok bool) {
 		s.transfers++
 		s.mu.Unlock()
 	}
-	if s.transferring.empty() {
+	if s.transferring.empty() && s.checking.empty() {
 		time.AfterFunc(averageStopAfter, s.stopAverageLoop)
 	}
 }
