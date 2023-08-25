@@ -636,6 +636,9 @@ type OpenWriterAter interface {
 	OpenWriterAt(ctx context.Context, remote string, size int64) (WriterAtCloser, error)
 }
 
+// OpenWriterAtFn describes the OpenWriterAt function pointer
+type OpenWriterAtFn func(ctx context.Context, remote string, size int64) (WriterAtCloser, error)
+
 type OpenChunkWriter interface {
 	// OpenChunkWriter returns the chunk size and a ChunkWriter
 	//
@@ -644,15 +647,18 @@ type OpenChunkWriter interface {
 	OpenChunkWriter(ctx context.Context, remote string, src ObjectInfo, options ...OpenOption) (chunkSize int64, writer ChunkWriter, err error)
 }
 
+// OpenChunkWriterFn describes the OpenChunkWriter function pointer
+type OpenChunkWriterFn func(ctx context.Context, remote string, src ObjectInfo, options ...OpenOption) (chunkSize int64, writer ChunkWriter, err error)
+
 type ChunkWriter interface {
 	// WriteChunk will write chunk number with reader bytes, where chunk number >= 0
-	WriteChunk(chunkNumber int, reader io.ReadSeeker) (bytesWritten int64, err error)
+	WriteChunk(ctx context.Context, chunkNumber int, reader io.ReadSeeker) (bytesWritten int64, err error)
 
 	// Close complete chunked writer
-	Close() error
+	Close(ctx context.Context) error
 
 	// Abort chunk write
-	Abort() error
+	Abort(ctx context.Context) error
 }
 
 // UserInfoer is an optional interface for Fs
