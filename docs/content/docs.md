@@ -351,6 +351,10 @@ possible to write in all of them. This is mostly a problem on Windows, where
 the console traditionally uses a non-Unicode character set - defined
 by the so-called "code page".
 
+Do not use single character names on Windows as it creates ambiguity with Windows
+drives' names, e.g.: remote called `C` is indistinguishable from `C` drive. Rclone
+will always assume that single letter name refers to a drive.
+
 Quoting and the shell
 ---------------------
 
@@ -640,6 +644,9 @@ Local address to bind to for outgoing connections.  This can be an
 IPv4 address (1.2.3.4), an IPv6 address (1234::789A) or host name.  If
 the host name doesn't resolve or resolves to more than one IP address
 it will give an error.
+
+You can use `--bind 0.0.0.0` to force rclone to use IPv4 addresses and
+`--bind ::0` to force rclone to use IPv6 addresses.
 
 ### --bwlimit=BANDWIDTH_SPEC ###
 
