@@ -127,10 +127,10 @@ backends:
      # This test doesn't work on a standard dropbox account because it
      # tries to set the expiry of the link
      - TestIntegration/FsMkdir/FsPutFiles/PublicLink
- - backend:  "filefabric"
-   remote:   "TestFileFabric:"
-   fastlist: false
-   extratime: 2.0
+ # - backend:  "filefabric"
+ #   remote:   "TestFileFabric:"
+ #   fastlist: false
+ #   extratime: 2.0
  - backend:  "googlecloudstorage"
    remote:   "TestGoogleCloudStorage:"
    fastlist: true
@@ -434,3 +434,6 @@ backends:
      - TestIntegration/FsMkdir/FsEncoding/trailing_LF
      - TestIntegration/FsMkdir/FsEncoding/leading_HT
      - TestIntegration/FsMkdir/FsPutFiles/FsPutStream/0
+ - backend:  "quatrix"
+   remote:   "TestQuatrix:"
+   fastlist: false

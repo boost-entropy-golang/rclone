@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"path"
 	"strings"
 	"time"
@@ -62,13 +61,23 @@ func init() {
 		NewFs:       NewFs,
 		Options: []fs.Option{{
 			Name:     "username",
-			Help:     `The username of your proton drive account`,
+			Help:     `The username of your proton account`,
 			Required: true,
 		}, {
 			Name:       "password",
-			Help:       "The password of your proton drive account.",
+			Help:       "The password of your proton account.",
 			Required:   true,
 			IsPassword: true,
+		}, {
+			Name: "mailboxPassword",
+			Help: `The mailbox password of your two-password proton account.
+
+For more information regarding the mailbox password, please check the 
+following official knowledge base article: 
+https://proton.me/support/the-difference-between-the-mailbox-password-and-login-password
+`,
+			IsPassword: true,
+			Advanced:   true,
 		}, {
 			Name: "2fa",
 			Help: `The 2FA code
@@ -150,9 +159,10 @@ then we might have a problem with caching the stale data.`,
 
 // Options defines the configuration for this backend
 type Options struct {
-	Username string `config:"username"`
-	Password string `config:"password"`
-	TwoFA    string `config:"2fa"`
+	Username        string `config:"username"`
+	Password        string `config:"password"`
+	MailboxPassword string `config:"mailboxPassword"`
+	TwoFA           string `config:"2fa"`
 
 	// advanced
 	Enc                  encoder.MultiEncoder `config:"encoding"`
@@ -264,12 +274,12 @@ func clearConfigMap(m configmap.Mapper) {
 }
 
 func authHandler(auth proton.Auth) {
-	// log.Println("authHandler called")
+	// fs.Debugf("authHandler called")
 	setConfigMap(_mapper, auth.UID, auth.AccessToken, auth.RefreshToken, _saltedKeyPass)
 }
 
 func deAuthHandler() {
-	// log.Println("deAuthHandler called")
+	// fs.Debugf("deAuthHandler called")
 	clearConfigMap(_mapper)
 }
 
@@ -314,6 +324,7 @@ func newProtonDrive(ctx context.Context, f *Fs, opt *Options, m configmap.Mapper
 	config.UseReusableLogin = false
 	config.FirstLoginCredential.Username = opt.Username
 	config.FirstLoginCredential.Password = opt.Password
+	config.FirstLoginCredential.MailboxPassword = opt.MailboxPassword
 	config.FirstLoginCredential.TwoFA = opt.TwoFA
 	protonDrive, auth, err := protonDriveAPI.NewProtonDrive(ctx, config, authHandler, deAuthHandler)
 	if err != nil {
@@ -342,6 +353,14 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		opt.Password, err = obscure.Reveal(opt.Password)
 		if err != nil {
 			return nil, fmt.Errorf("couldn't decrypt password: %w", err)
+		}
+	}
+
+	if opt.MailboxPassword != "" {
+		var err error
+		opt.MailboxPassword, err = obscure.Reveal(opt.MailboxPassword)
+		if err != nil {
+			return nil, fmt.Errorf("couldn't decrypt mailbox password: %w", err)
 		}
 	}
 
@@ -786,9 +805,7 @@ func (o *Object) Hash(ctx context.Context, t hash.Type) (string, error) {
 		return *o.digests, nil
 	}
 
-	// sha1 not cached
-	log.Println("sha1 not cached")
-	// we fetch and try to obtain the sha1 of the link
+	// sha1 not cached: we fetch and try to obtain the sha1 of the link
 	fileSystemAttrs, err := o.fs.protonDrive.GetActiveRevisionAttrsByID(ctx, o.ID())
 	if err != nil {
 		return "", err
@@ -810,7 +827,7 @@ func (o *Object) Size() int64 {
 			return *o.originalSize
 		}
 
-		fs.Errorf(o, "Original size should exist")
+		fs.Debugf(o, "Original file size missing")
 	}
 	return o.size
 }
