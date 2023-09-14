@@ -47,6 +47,7 @@ Here is an overview of the major features of each cloud storage system.
 | PikPak                       | MD5              | R       | No               | No              | R         | -        |
 | premiumize.me                | -                | -       | Yes              | No              | R         | -        |
 | put.io                       | CRC-32           | R/W     | No               | Yes             | R         | -        |
+| Proton Drive                 | SHA1             | R/W     | No               | No              | R         | -        |
 | QingStor                     | MD5              | - ⁹     | No               | No              | R/W       | -        |
 | Quatrix by Maytech           | -                | R/W     | No               | No              | -         | -        |
 | Seafile                      | -                | -       | No               | No              | -         | -        |
@@ -494,11 +495,12 @@ upon backend-specific capabilities.
 | Microsoft OneDrive           | Yes   | Yes  | Yes  | Yes     | Yes     | No    | No           | No  | Yes          | Yes   | Yes      |
 | OpenDrive                    | Yes   | Yes  | Yes  | Yes     | No      | No    | No           | No  | No           | No    | Yes      |
 | OpenStack Swift              | Yes † | Yes  | No   | No      | No      | Yes   | Yes          | No  | No           | Yes   | No       |
-| Oracle Object Storage        | No    | Yes  | No   | No      | Yes     | Yes   | Yes          | No  | No           | No    | No       |
+| Oracle Object Storage        | No    | Yes  | No   | No      | Yes     | Yes   | Yes          | Yes | No           | No    | No       |
 | pCloud                       | Yes   | Yes  | Yes  | Yes     | Yes     | No    | No           | No  | Yes          | Yes   | Yes      |
 | PikPak                       | Yes   | Yes  | Yes  | Yes     | Yes     | No    | No           | No  | Yes          | Yes   | Yes      |
 | premiumize.me                | Yes   | No   | Yes  | Yes     | No      | No    | No           | No  | Yes          | Yes   | Yes      |
 | put.io                       | Yes   | No   | Yes  | Yes     | Yes     | No    | Yes          | No  | No           | Yes   | Yes      |
+| Proton Drive                 | Yes   | No   | Yes  | Yes     | Yes     | No    | No           | No  | No           | Yes   | Yes      |
 | QingStor                     | No    | Yes  | No   | No      | Yes     | Yes   | No           | No  | No           | No    | No       |
 | Quatrix by Maytech           | Yes   | Yes  | Yes  | Yes     | No      | No    | No           | No  | No           | Yes   | Yes      |
 | Seafile                      | Yes   | Yes  | Yes  | Yes     | Yes     | Yes   | Yes          | No  | Yes          | Yes   | Yes      |
