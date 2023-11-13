@@ -784,3 +784,6 @@ put them back in again.` >}}
   * Keigo Imai <keigo.imai@gmail.com>
   * Ivan Yanitra <iyanitra@tesla-consulting.com>
   * alfish2000 <alfish2000@gmail.com>
+  * wuxingzhong <qq330332812@gmail.com>
+  * Adithya Kumar <akumar42@protonmail.com>
+  * Tayo-pasedaRJ <138471223+Tayo-pasedaRJ@users.noreply.github.com>
