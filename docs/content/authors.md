@@ -787,3 +787,13 @@ put them back in again.` >}}
   * wuxingzhong <qq330332812@gmail.com>
   * Adithya Kumar <akumar42@protonmail.com>
   * Tayo-pasedaRJ <138471223+Tayo-pasedaRJ@users.noreply.github.com>
+  * Peter Kreuser <logo@kreuser.name>
+  * Piyush <piyushgarg80>
+  * fotile96 <fotile96@users.noreply.github.com>
+  * Luc Ritchie <luc.ritchie@gmail.com>
+  * cynful <cynful@users.noreply.github.com>
+  * wjielai <wjielai@tencent.com>
+  * Jack Deng <jackdeng@gmail.com>
+  * Mikubill <31246794+Mikubill@users.noreply.github.com>
+  * Artur Neumann <artur@jankaritech.com>
+  * Saw-jan <saw.jan.grg3e@gmail.com>
