@@ -55,7 +55,7 @@ Here is an overview of the major features of each cloud storage system.
 | Seafile                      | -                 | -       | No               | No              | -         | -        |
 | SFTP                         | MD5, SHA1 ²       | R/W     | Depends          | No              | -         | -        |
 | Sia                          | -                 | -       | No               | No              | -         | -        |
-| SMB                          | -                 | -       | Yes              | No              | -         | -        |
+| SMB                          | -                 | R/W     | Yes              | No              | -         | -        |
 | SugarSync                    | -                 | -       | No               | No              | -         | -        |
 | Storj                        | -                 | R       | No               | No              | -         | -        |
 | Uptobox                      | -                 | -       | No               | Yes             | -         | -        |
@@ -90,7 +90,7 @@ mistake or an unsupported feature.
 ⁹ QingStor does not support SetModTime for objects bigger than 5 GiB.
 
 ¹⁰ FTP supports modtimes for the major FTP servers, and also others
-if they advertised required protocol extensions. See [this](/ftp/#modified-time)
+if they advertised required protocol extensions. See [this](/ftp/#modification-times)
 for more details.
 
 ¹¹ Internet Archive requires option `wait_archive` to be set to a non-zero value

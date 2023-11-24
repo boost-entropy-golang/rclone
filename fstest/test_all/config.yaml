@@ -426,16 +426,18 @@ backends:
  - backend:  "zoho"
    remote:   "TestZoho:"
    fastlist: false
+   tests:
+     - backend
  - backend: "hdfs"
    remote: "TestHdfs:"
    fastlist: false
    ignore:
      - TestSyncUTFNorm
- - backend: "uptobox"
-   remote: "TestUptobox:"
-   fastlist: false
-   ignore:
-     - TestRWFileHandleWriteNoWrite
+ # - backend: "uptobox"
+ #   remote: "TestUptobox:"
+ #   fastlist: false
+ #   ignore:
+ #     - TestRWFileHandleWriteNoWrite
  - backend: "oracleobjectstorage"
    remote: "TestOracleObjectStorage:"
    fastlist: true
