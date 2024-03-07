@@ -19,6 +19,7 @@ import (
 	mutex "sync" // renamed as "sync" already in use
 
 	_ "github.com/rclone/rclone/backend/all" // import all backends
+	"github.com/rclone/rclone/cmd/bisync/bilib"
 	"github.com/rclone/rclone/fs"
 	"github.com/rclone/rclone/fs/accounting"
 	"github.com/rclone/rclone/fs/filter"
@@ -341,6 +342,45 @@ func TestMoveEmptyDirectories(t *testing.T) {
 	// So check it more manually
 	got := fstest.NewDirectory(ctx, t, r.Fremote, "sub dir")
 	fstest.CheckDirModTime(ctx, t, r.Fremote, got, subDirT)
+}
+
+// Test that --no-update-dir-modtime is working
+func TestSyncNoUpdateDirModtime(t *testing.T) {
+	r := fstest.NewRun(t)
+	if r.Fremote.Features().DirSetModTime == nil {
+		t.Skip("Skipping test as backend does not support DirSetModTime")
+	}
+
+	ctx, ci := fs.AddConfig(context.Background())
+	ci.NoUpdateDirModTime = true
+	const name = "sub dir no update dir modtime"
+
+	// Set the modtime on name to something specific
+	_, err := operations.MkdirModTime(ctx, r.Flocal, name, t1)
+	require.NoError(t, err)
+
+	// Create the remote directory with the current time
+	require.NoError(t, r.Fremote.Mkdir(ctx, name))
+
+	// Read its modification time
+	wantT := fstest.NewDirectory(ctx, t, r.Fremote, name).ModTime(ctx)
+
+	ctx = predictDstFromLogger(ctx)
+	err = Sync(ctx, r.Fremote, r.Flocal, true)
+	require.NoError(t, err)
+	testLoggerVsLsf(ctx, r.Fremote, operations.GetLoggerOpt(ctx).JSON, t)
+
+	r.CheckRemoteListing(
+		t,
+		[]fstest.Item{},
+		[]string{
+			name,
+		},
+	)
+
+	// Read the new directory modification time - it should not have changed
+	gotT := fstest.NewDirectory(ctx, t, r.Fremote, name).ModTime(ctx)
+	fstest.AssertTimeEqualWithPrecision(t, name, wantT, gotT, r.Fremote.Precision())
 }
 
 // Test sync empty directories
@@ -2497,6 +2537,74 @@ func TestSyncConcurrentDelete(t *testing.T) {
 
 func TestSyncConcurrentTruncate(t *testing.T) {
 	testSyncConcurrent(t, "truncate")
+}
+
+// Tests that nothing is transferred when src and dst already match
+// Run the same sync twice, ensure no action is taken the second time
+func TestNothingToTransfer(t *testing.T) {
+	accounting.GlobalStats().ResetCounters()
+	ctx, _ := fs.AddConfig(context.Background())
+	r := fstest.NewRun(t)
+	file1 := r.WriteFile("sub dir/hello world", "hello world", t1)
+	file2 := r.WriteFile("sub dir2/very/very/very/very/very/nested/subdir/hello world", "hello world", t1)
+	r.CheckLocalItems(t, file1, file2)
+	_, err := operations.SetDirModTime(ctx, r.Flocal, nil, "sub dir", t2)
+	if err != nil && !errors.Is(err, fs.ErrorNotImplemented) {
+		require.NoError(t, err)
+	}
+	r.Mkdir(ctx, r.Fremote)
+	_, err = operations.MkdirModTime(ctx, r.Fremote, "sub dir", t3)
+	require.NoError(t, err)
+
+	// set logging
+	// (this checks log output as DirModtime operations do not yet have stats, and r.CheckDirectoryModTimes also does not tell us what actions were taken)
+	oldLogLevel := fs.GetConfig(context.Background()).LogLevel
+	defer func() { fs.GetConfig(context.Background()).LogLevel = oldLogLevel }() // reset to old val after test
+	// need to do this as fs.Infof only respects the globalConfig
+	fs.GetConfig(context.Background()).LogLevel = fs.LogLevelInfo
+
+	accounting.GlobalStats().ResetCounters()
+	ctx = predictDstFromLogger(ctx)
+	output := bilib.CaptureOutput(func() {
+		err = CopyDir(ctx, r.Fremote, r.Flocal, true)
+		require.NoError(t, err)
+	})
+	require.NotNil(t, output)
+	testLoggerVsLsf(ctx, r.Fremote, operations.GetLoggerOpt(ctx).JSON, t)
+	r.CheckLocalItems(t, file1, file2)
+	r.CheckRemoteItems(t, file1, file2)
+	// Check that the modtimes of the directories are as expected
+	r.CheckDirectoryModTimes(t, "sub dir")
+
+	// check that actions were taken
+	assert.True(t, strings.Contains(string(output), "Copied"), `expected to find at least one "Copied" log: `+string(output))
+	if r.Fremote.Features().DirSetModTime != nil || r.Fremote.Features().MkdirMetadata != nil {
+		assert.True(t, strings.Contains(string(output), "Set directory modification time"), `expected to find at least one "Set directory modification time" log: `+string(output))
+	}
+	assert.False(t, strings.Contains(string(output), "There was nothing to transfer"), `expected to find no "There was nothing to transfer" logs, but found one: `+string(output))
+	assert.Equal(t, int64(2), accounting.GlobalStats().GetTransfers())
+
+	// run it again and make sure no actions were taken
+	accounting.GlobalStats().ResetCounters()
+	ctx = predictDstFromLogger(ctx)
+	output = bilib.CaptureOutput(func() {
+		err = CopyDir(ctx, r.Fremote, r.Flocal, true)
+		require.NoError(t, err)
+	})
+	require.NotNil(t, output)
+	testLoggerVsLsf(ctx, r.Fremote, operations.GetLoggerOpt(ctx).JSON, t)
+	r.CheckLocalItems(t, file1, file2)
+	r.CheckRemoteItems(t, file1, file2)
+	// Check that the modtimes of the directories are as expected
+	r.CheckDirectoryModTimes(t, "sub dir")
+
+	// check that actions were NOT taken
+	assert.False(t, strings.Contains(string(output), "Copied"), `expected to find no "Copied" logs, but found one: `+string(output))
+	if r.Fremote.Features().DirSetModTime != nil || r.Fremote.Features().MkdirMetadata != nil {
+		assert.False(t, strings.Contains(string(output), "Set directory modification time"), `expected to find no "Set directory modification time" logs, but found one: `+string(output))
+	}
+	assert.True(t, strings.Contains(string(output), "There was nothing to transfer"), `expected to find a "There was nothing to transfer" log: `+string(output))
+	assert.Equal(t, int64(0), accounting.GlobalStats().GetTransfers())
 }
 
 // for testing logger:

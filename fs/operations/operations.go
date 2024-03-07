@@ -141,6 +141,40 @@ func Equal(ctx context.Context, src fs.ObjectInfo, dst fs.Object) bool {
 	return equal(ctx, src, dst, defaultEqualOpt(ctx))
 }
 
+// DirsEqual is like Equal but for dirs instead of objects.
+// It returns true if two dirs should be considered "equal" for the purposes of syncCopyMove
+// (in other words, true == "skip updating modtime/metadata for this dir".)
+// Unlike Equal, it does not consider size or checksum, as these do not apply to directories.
+func DirsEqual(ctx context.Context, src, dst fs.Directory, opt DirsEqualOpt) (equal bool) {
+	if dst == nil {
+		return false
+	}
+	ci := fs.GetConfig(ctx)
+	if ci.SizeOnly || ci.Immutable || ci.IgnoreExisting || opt.ModifyWindow == fs.ModTimeNotSupported {
+		return true
+	}
+	if ci.IgnoreTimes {
+		return false
+	}
+	if !(opt.SetDirModtime || opt.SetDirMetadata) {
+		return true
+	}
+	srcModTime, dstModTime := src.ModTime(ctx), dst.ModTime(ctx)
+	if srcModTime.IsZero() || dstModTime.IsZero() {
+		return false
+	}
+	dt := dstModTime.Sub(srcModTime)
+	if dt < opt.ModifyWindow && dt > -opt.ModifyWindow {
+		fs.Debugf(dst, "Directory modification time the same (differ by %s, within tolerance %s)", dt, opt.ModifyWindow)
+		return true
+	}
+	if ci.UpdateOlder && dt >= opt.ModifyWindow {
+		fs.Debugf(dst, "Destination directory is newer than source, skipping")
+		return true
+	}
+	return false
+}
+
 // sizeDiffers compare the size of src and dst taking into account the
 // various ways of ignoring sizes
 func sizeDiffers(ctx context.Context, src, dst fs.ObjectInfo) bool {
@@ -170,6 +204,13 @@ func defaultEqualOpt(ctx context.Context) equalOpt {
 		updateModTime:     !ci.NoUpdateModTime,
 		forceModTimeMatch: false,
 	}
+}
+
+// DirsEqualOpt represents options for DirsEqual function()
+type DirsEqualOpt struct {
+	ModifyWindow   time.Duration // Max time diff to be considered the same
+	SetDirModtime  bool          // whether to consider dir modtime
+	SetDirMetadata bool          // whether to consider dir metadata
 }
 
 var modTimeUploadOnce sync.Once
@@ -2269,7 +2310,10 @@ func DirMove(ctx context.Context, f fs.Fs, srcRemote, dstRemote string) (err err
 		if err == nil {
 			accounting.Stats(ctx).Renames(1)
 		}
-		return err
+		if err != fs.ErrorCantDirMove && err != fs.ErrorDirExists {
+			return err
+		}
+		fs.Infof(f, "Can't DirMove - falling back to file moves: %v", err)
 	}
 
 	// Load the directory tree into memory
@@ -2546,7 +2590,7 @@ func CopyDirMetadata(ctx context.Context, f fs.Fs, dst fs.Directory, dir string,
 	} else {
 		do, ok := dst.(fs.SetMetadataer)
 		if !ok {
-			return nil, fmt.Errorf("internal error: expecting directory %T from %v to have SetMetadata method: %w", dir, f, fs.ErrorNotImplemented)
+			return nil, fmt.Errorf("internal error: expecting directory %s (%T) from %v to have SetMetadata method: %w", logName, dst, f, fs.ErrorNotImplemented)
 		}
 		err = do.SetMetadata(ctx, metadata)
 		newDst = dst
@@ -2568,6 +2612,11 @@ func CopyDirMetadata(ctx context.Context, f fs.Fs, dst fs.Directory, dir string,
 // It does not create the directory.
 func SetDirModTime(ctx context.Context, f fs.Fs, dst fs.Directory, dir string, modTime time.Time) (newDst fs.Directory, err error) {
 	logName := dirName(f, dst, dir)
+	ci := fs.GetConfig(ctx)
+	if ci.NoUpdateDirModTime {
+		fs.Debugf(logName, "Skipping set directory modification time as --no-update-dir-modtime is set")
+		return nil, nil
+	}
 	if SkipDestructive(ctx, logName, "set directory modification time") {
 		return nil, nil
 	}
@@ -2598,5 +2647,5 @@ func SetDirModTime(ctx context.Context, f fs.Fs, dst fs.Directory, dir string, m
 	}
 
 	// Something should have worked so return an error
-	return nil, fmt.Errorf("no method to set directory modtime found for %v (%T): %w", f, dir, fs.ErrorNotImplemented)
+	return nil, fmt.Errorf("no method to set directory modtime found for %v (%T): %w", f, dst, fs.ErrorNotImplemented)
 }
