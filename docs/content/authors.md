@@ -838,3 +838,6 @@ put them back in again.` >}}
   * psychopatt <66741203+psychopatt@users.noreply.github.com>
   * Alex Garel <alex@garel.org>
   * Warrentheo <warrentheo@hotmail.com>
+  * Alexandre Lavigne <lavigne958@gmail.com>
+  * yoelvini <134453420+yoelvini@users.noreply.github.com>
+  * Erisa A <erisa@cloudflare.com>
