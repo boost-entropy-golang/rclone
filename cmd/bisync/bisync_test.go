@@ -69,6 +69,7 @@ var initDate = time.Date(2000, time.January, 1, 0, 0, 0, 0, bisync.TZ)
 // go run ./fstest/test_all -remotes local,TestCrypt:,TestDrive:,TestOneDrive:,TestOneDriveBusiness:,TestDropbox:,TestCryptDrive:,TestOpenDrive:,TestChunker:,:memory:,TestCryptNoEncryption:,TestCombine:DirA,TestFTPRclone:,TestWebdavRclone:,TestS3Rclone:,TestSFTPRclone:,TestSFTPRcloneSSH:,TestNextcloud:,TestChunkerNometaLocal:,TestChunkerChunk3bLocal:,TestChunkerLocal:,TestChunkerChunk3bNometaLocal:,TestStorj: -run '^TestBisync.*$' -timeout 3h -verbose -maxtries 5
 // go test -timeout 3h -run '^TestBisync.*$' github.com/rclone/rclone/cmd/bisync -remote TestDrive:Bisync -v
 // go test -timeout 3h -run '^TestBisyncRemoteRemote/basic$' github.com/rclone/rclone/cmd/bisync -remote TestDropbox:Bisync -v
+// TestFTPProftpd:,TestFTPPureftpd:,TestFTPRclone:,TestFTPVsftpd:,TestHdfs:,TestS3Minio:,TestS3MinioEdge:,TestS3Rclone:,TestSeafile:,TestSeafileEncrypted:,TestSeafileV6:,TestSFTPOpenssh:,TestSFTPRclone:,TestSFTPRcloneSSH:,TestSia:,TestSwiftAIO:,TestWebdavNextcloud:,TestWebdavOwncloud:,TestWebdavRclone:
 
 // logReplacements make modern test logs comparable with golden dir.
 // It is a string slice of even length with this structure:
@@ -89,6 +90,7 @@ var logReplacements = []string{
 	`^NOTICE: .*?: Forced to upload files to set modification times on this backend.$`, dropMe,
 	`^INFO  : .*? Committing uploads - please wait...$`, dropMe,
 	`^INFO  : .*?: src and dst identical but can't set mod time without deleting and re-uploading$`, dropMe,
+	`^INFO  : .*?: src and dst identical but can't set mod time without re-uploading$`, dropMe,
 	// ignore crypt info messages
 	`^INFO  : .*?: Crypt detected! Using cryptcheck instead of check. \(Use --size-only or --ignore-checksum to disable\)$`, dropMe,
 	// ignore drive info messages
@@ -215,12 +217,21 @@ type bisyncTest struct {
 
 var color = bisync.Color
 
+// TestMain drives the tests
+func TestMain(m *testing.M) {
+	fstest.TestMain(m)
+}
+
 // Path1 is remote, Path2 is local
 func TestBisyncRemoteLocal(t *testing.T) {
 	if *fstest.RemoteName == *argRemote2 {
 		t.Skip("path1 and path2 are the same remote")
 	}
-	testBisync(t, *fstest.RemoteName, *argRemote2)
+	_, remote, cleanup, err := fstest.RandomRemote()
+	log.Printf("remote: %v", remote)
+	require.NoError(t, err)
+	defer cleanup()
+	testBisync(t, remote, *argRemote2)
 }
 
 // Path1 is local, Path2 is remote
@@ -228,13 +239,21 @@ func TestBisyncLocalRemote(t *testing.T) {
 	if *fstest.RemoteName == *argRemote2 {
 		t.Skip("path1 and path2 are the same remote")
 	}
-	testBisync(t, *argRemote2, *fstest.RemoteName)
+	_, remote, cleanup, err := fstest.RandomRemote()
+	log.Printf("remote: %v", remote)
+	require.NoError(t, err)
+	defer cleanup()
+	testBisync(t, *argRemote2, remote)
 }
 
 // Path1 and Path2 are both different directories on remote
 // (useful for testing server-side copy/move)
 func TestBisyncRemoteRemote(t *testing.T) {
-	testBisync(t, *fstest.RemoteName, *fstest.RemoteName)
+	_, remote, cleanup, err := fstest.RandomRemote()
+	log.Printf("remote: %v", remote)
+	require.NoError(t, err)
+	defer cleanup()
+	testBisync(t, remote, remote)
 }
 
 // TestBisync is a test engine for bisync test cases.
@@ -528,14 +547,13 @@ func (b *bisyncTest) runTestCase(ctx context.Context, t *testing.T, testCase str
 func (b *bisyncTest) makeTempRemote(ctx context.Context, remote, subdir string) (f, parent fs.Fs, path, canon string) {
 	var err error
 	if bilib.IsLocalPath(remote) && !strings.HasPrefix(remote, ":") && !strings.Contains(remote, ",") {
-		if remote != "" && remote != "local" {
+		if remote != "" && !strings.HasPrefix(remote, "local") && *fstest.RemoteName != "" {
 			b.t.Fatalf(`Missing ":" in remote %q. Use "local" to test with local filesystem.`, remote)
 		}
 		parent, err = cache.Get(ctx, b.tempDir)
 		checkError(b.t, err, "parsing local tempdir %s", b.tempDir)
 
 		path = filepath.Join(b.tempDir, b.testCase)
-		canon = bilib.CanonicalPath(path) + "_"
 		path = filepath.Join(path, subdir)
 	} else {
 		last := remote[len(remote)-1]
@@ -548,13 +566,13 @@ func (b *bisyncTest) makeTempRemote(ctx context.Context, remote, subdir string) 
 		checkError(b.t, operations.Mkdir(ctx, parent, subdir), "Mkdir "+subdir) // ensure dir exists (storj seems to need this)
 
 		path = remote + "/" + b.testCase
-		canon = bilib.CanonicalPath(path) + "_"
 		path += "/" + subdir
 	}
 
 	f, err = cache.Get(ctx, path)
 	checkError(b.t, err, "parsing remote/subdir %s/%s", remote, subdir)
-	path = bilib.FsPath(f) // Make it canonical
+	path = bilib.FsPath(f)                                                                                                                // Make it canonical
+	canon = bilib.StripHexString(bilib.CanonicalPath(strings.TrimSuffix(strings.TrimSuffix(path, `\`+subdir+`\`), "/"+subdir+"/"))) + "_" // account for possible connection string
 	return
 }
 
