@@ -848,3 +848,5 @@ put them back in again.` >}}
   * yudrywet <yudeyao@yeah.net>
   * Butanediol <git@xnh.app>
   * Dave Nicolson <david.nicolson@gmail.com>
+  * Katia Esposito <katia@linux.com>
+  * pawsey-kbuckley <36438302+pawsey-kbuckley@users.noreply.github.com>
