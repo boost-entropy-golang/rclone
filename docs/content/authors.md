@@ -862,3 +862,6 @@ put them back in again.` >}}
   * Thomas Schneider <tspam.github@brainfuck.space>
   * Charles Hamilton <52973156+chamilton-ccn@users.noreply.github.com>
   * Tomasz Melcer <tomasz@melcer.pl>
+  * Michał Dzienisiewicz <michal.piotr.dz@gmail.com>
+  * Florian Klink <flokli@flokli.de>
+  * Bill Fraser <bill@wfraser.dev>
