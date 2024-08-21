@@ -137,6 +137,12 @@ backends:
  #   remote:   "TestFileFabric:"
  #   fastlist: false
  #   extratime: 2.0
+ - backend:  "gofile"
+   remote:   "TestGoFile:"
+   fastlist: true
+ - backend:  "filescom"
+   remote:   "TestFilesCom:"
+   fastlist: false
  - backend:  "googlecloudstorage"
    remote:   "TestGoogleCloudStorage:"
    fastlist: true
@@ -364,6 +370,11 @@ backends:
     # This test fails with message
     # "share_status_prohibited" (9): Sorry, the sharing service is under maintenance in the current region.
      - TestIntegration/FsMkdir/FsPutFiles/PublicLink
+ - backend:  "pixeldrain"
+   remote: "TestPixeldrain:"
+   ignore:
+     - TestIntegration/FsMkdir/FsEncoding/invalid_UTF-8
+   fastlist: false
  - backend:  "webdav"
    remote:   "TestWebdavNextcloud:"
    ignore:

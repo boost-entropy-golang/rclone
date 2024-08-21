@@ -3215,7 +3215,7 @@ func setEndpointValueForIDriveE2(m configmap.Mapper) (err error) {
 	// API to get user region endpoint against the Access Key details: https://www.idrive.com/e2/guides/get_region_endpoint
 	resp, err := client.Post("https://api.idrivee2.com/api/service/get_region_end_point",
 		"application/json",
-		strings.NewReader(`{"access_key": "`+value+`"}`))
+		strings.NewReader(`{"access_key": `+strconv.Quote(value)+`}`))
 	if err != nil {
 		return
 	}
@@ -3392,7 +3392,7 @@ func setQuirks(opt *Options) {
 		// See: https://issuetracker.google.com/issues/323465186
 		// So make cutoff very large which it does seem to support
 		opt.CopyCutoff = math.MaxInt64
-	default:
+	default: //nolint:gocritic // Don't include gocritic when running golangci-lint to avoid defaultCaseOrder: consider to make `default` case as first or as last case
 		fs.Logf("s3", "s3 provider %q not known - please set correctly", opt.Provider)
 		fallthrough
 	case "Other":
@@ -3889,7 +3889,7 @@ func versionLess(a, b *types.ObjectVersion) bool {
 	if *a.Key > *b.Key {
 		return false
 	}
-	dt := (*a.LastModified).Sub(*b.LastModified)
+	dt := a.LastModified.Sub(*b.LastModified)
 	if dt > 0 {
 		return true
 	}
@@ -4173,11 +4173,9 @@ func (f *Fs) list(ctx context.Context, opt listOpt, fn listFn) error {
 				if opt.noSkipMarkers {
 					// process directory markers as files
 					isDirectory = false
-				} else {
+				} else if remote == f.opt.Enc.ToStandardPath(opt.directory) {
 					// Don't insert the root directory
-					if remote == f.opt.Enc.ToStandardPath(opt.directory) {
-						continue
-					}
+					continue
 				}
 			}
 			remote = remote[len(opt.prefix):]
@@ -5009,11 +5007,11 @@ func (f *Fs) Command(ctx context.Context, name string, arg []string, opt map[str
 			RestoreRequest: &types.RestoreRequest{},
 		}
 		if lifetime := opt["lifetime"]; lifetime != "" {
-			ilifetime, err := strconv.ParseInt(lifetime, 10, 64)
-			ilifetime32 := int32(ilifetime)
+			ilifetime, err := strconv.ParseInt(lifetime, 10, 32)
 			if err != nil {
 				return nil, fmt.Errorf("bad lifetime: %w", err)
 			}
+			ilifetime32 := int32(ilifetime)
 			req.RestoreRequest.Days = &ilifetime32
 		}
 		if priority := opt["priority"]; priority != "" {
@@ -5601,8 +5599,8 @@ func (o *Object) setMetaData(resp *s3.HeadObjectOutput) {
 		// it from listings then it may have millisecond precision, but
 		// if we read it from a HEAD/GET request then it will have
 		// second precision.
-		equalToWithinOneSecond := o.lastModified.Truncate(time.Second).Equal((*resp.LastModified).Truncate(time.Second))
-		newHasNs := (*resp.LastModified).Nanosecond() != 0
+		equalToWithinOneSecond := o.lastModified.Truncate(time.Second).Equal(resp.LastModified.Truncate(time.Second))
+		newHasNs := resp.LastModified.Nanosecond() != 0
 		if !equalToWithinOneSecond || newHasNs {
 			o.lastModified = *resp.LastModified
 		}
@@ -5964,7 +5962,7 @@ func (w *s3ChunkWriter) addMd5(md5binary *[]byte, chunkNumber int64) {
 	if extend := end - int64(len(w.md5s)); extend > 0 {
 		w.md5s = append(w.md5s, make([]byte, extend)...)
 	}
-	copy(w.md5s[start:end], (*md5binary)[:])
+	copy(w.md5s[start:end], (*md5binary))
 }
 
 // WriteChunk will write chunk number with reader bytes, where chunk number >= 0
@@ -5994,7 +5992,7 @@ func (w *s3ChunkWriter) WriteChunk(ctx context.Context, chunkNumber int, reader 
 	}
 	md5sumBinary := m.Sum([]byte{})
 	w.addMd5(&md5sumBinary, int64(chunkNumber))
-	md5sum := base64.StdEncoding.EncodeToString(md5sumBinary[:])
+	md5sum := base64.StdEncoding.EncodeToString(md5sumBinary)
 
 	// S3 requires 1 <= PartNumber <= 10000
 	s3PartNumber := aws.Int32(int32(chunkNumber + 1))
