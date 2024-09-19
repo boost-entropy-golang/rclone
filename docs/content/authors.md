@@ -891,3 +891,6 @@ put them back in again.` >}}
   * Oleg Kunitsyn <114359669+hiddenmarten@users.noreply.github.com>
   * Divyam <47589864+divyam234@users.noreply.github.com>
   * ttionya <ttionya@users.noreply.github.com>
+  * quiescens <quiescens@gmail.com>
+  * rishi.sridhar <rishi.sridhar@zohocorp.com>
+  * Lawrence Murray <lawrence@indii.org>
