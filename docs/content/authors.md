@@ -906,3 +906,6 @@ put them back in again.` >}}
   * Diego Monti <diegmonti@users.noreply.github.com>
   * tgfisher <tgfisher@stanford.edu>
   * Moises Lima <mozlima@gmail.com>
+  * Dimitar Ivanov <mimiteto@gmail.com>
+  * shenpengfeng <xinhangzhou@icloud.com>
+  * Dimitrios Slamaris <dim0x69@users.noreply.github.com>
